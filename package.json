@@ -1,0 +1,44 @@
+{
+  "name": "rewindrewindcli",
+  "version": "0.1.0",
+  "description": "Fast command-line wrapper for the RewindRewind events and exceptions API.",
+  "type": "module",
+  "bin": {
+    "rewindrewind": "./bin/rewindrewind.mjs",
+    "rr": "./bin/rewindrewind.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check bin/rewindrewind.mjs"
+  },
+  "keywords": [
+    "rewindrewind",
+    "observability",
+    "exceptions",
+    "events",
+    "cli",
+    "sentry",
+    "posthog"
+  ],
+  "author": "Toadstool Tech",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bananatron/rewindrewindcli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bananatron/rewindrewindcli/issues"
+  },
+  "homepage": "https://github.com/bananatron/rewindrewindcli#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}
