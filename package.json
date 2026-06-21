@@ -1,7 +1,7 @@
 {
-  "name": "rewindrewindcli",
-  "version": "0.1.0",
-  "description": "Fast command-line wrapper for the RewindRewind events and exceptions API.",
+  "name": "@rewindrewind/cli",
+  "version": "0.2.0",
+  "description": "RewindRewind CLI — set up front-end exceptions, back-end exceptions, and app events, and drive the whole API.",
   "type": "module",
   "bin": {
     "rewindrewind": "./bin/rewindrewind.mjs",
@@ -9,6 +9,7 @@
   },
   "files": [
     "bin",
+    "AGENTS.md",
     "README.md",
     "LICENSE"
   ],
