@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bin/test 1>&2 || echo 'bin/test reported issues (non-blocking stop hook).' >&2"
+          }
+        ]
+      }
+    ]
+  }
+}
