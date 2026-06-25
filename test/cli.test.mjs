@@ -402,6 +402,29 @@ test("init configures from an admin key and stores the project key", async () =>
   }
 });
 
+test("verify treats async event confirmation misses as a soft warning", async () => {
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1" },
+    fetch: async (url) => {
+      const u = String(url);
+      if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
+      if (u.endsWith("/v1/events")) return jsonResponse({ ok: true, event_id: "evt_1" }, 202);
+      if (u.endsWith("/v1/exceptions")) return jsonResponse({ ok: true }, 202);
+      if (u.includes("/api/projects/p1/events")) return jsonResponse({ ok: true, events: [] });
+      return jsonResponse({ ok: true });
+    },
+  });
+
+  const status = await main(["verify", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  const out = JSON.parse(io.stdout.text);
+  assert.equal(out.ok, true);
+  assert.equal(out.failed, 0);
+  assert.equal(out.checks.find((check) => check.check === "event confirmed in project").ok, null);
+  assert.match(io.stderr.text, /not found yet/);
+});
+
 test("configure can set an admin key file pointer instead of an inline key", async () => {
   const temp = await mkdtemp(join(tmpdir(), "rewindrewindcli-ptr-"));
   try {

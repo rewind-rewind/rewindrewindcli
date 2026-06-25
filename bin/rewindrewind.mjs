@@ -1318,7 +1318,7 @@ async function verifyCommand(ctx) {
     const found = await safe(() => request(ctx, "GET", `/api/projects/${encodeURIComponent(pid)}/events`, { query: { type: "rewindrewind.cli.verify", limit: 20 } }));
     const events = found.ok ? (found.value?.events ?? []) : [];
     confirmed = events.some((e) => JSON.stringify(e).includes(marker));
-    checks.push({ check: "event confirmed in project", surface: "app events", ok: found.ok && confirmed, detail: !found.ok ? found.error : confirmed ? "found" : "not found yet (ingestion may be async)" });
+    checks.push({ check: "event confirmed in project", surface: "app events", ok: !found.ok ? false : confirmed ? true : null, detail: !found.ok ? found.error : confirmed ? "found" : "not found yet (ingestion may be async)" });
   } else {
     checks.push({ check: "event confirmed in project", surface: "app events", ok: null, detail: "skipped (set an admin key and --project to confirm)" });
   }
