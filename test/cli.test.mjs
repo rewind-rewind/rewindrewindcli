@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -44,7 +44,7 @@ test("--help is a clean directory with topics, sdks, and commands", async () => 
 
 test("--help can emit a structured directory for agents", async () => {
   const io = harness();
-  const status = await main(["--help", "--format", "json"], io);
+  const status = await main(["--help", "--json"], io);
 
   assert.equal(status, 0);
   const out = JSON.parse(io.stdout.text);
@@ -67,7 +67,7 @@ test("help sdk node prints copy-paste setup", async () => {
 
 test("help sdk node can emit structured JSON", async () => {
   const io = harness();
-  const status = await main(["help", "sdk", "node", "--format", "json"], io);
+  const status = await main(["help", "sdk", "node", "--json"], io);
 
   assert.equal(status, 0);
   const out = JSON.parse(io.stdout.text);
@@ -78,14 +78,14 @@ test("help sdk node can emit structured JSON", async () => {
 
 test("sdk list and show expose SDK guidance as JSON commands", async () => {
   const listIo = harness();
-  assert.equal(await main(["sdk", "list"], listIo), 0);
+  assert.equal(await main(["sdk", "list", "--json"], listIo), 0);
   const list = JSON.parse(listIo.stdout.text);
   assert.ok(list.sdks.some((sdk) => sdk.id === "browser"));
   assert.ok(list.sdks.some((sdk) => sdk.id === "go"));
   assert.ok(list.concepts.some((concept) => concept.id === "events"));
 
   const showIo = harness();
-  assert.equal(await main(["sdk", "show", "python"], showIo), 0);
+  assert.equal(await main(["sdk", "show", "python", "--json"], showIo), 0);
   const show = JSON.parse(showIo.stdout.text);
   assert.equal(show.sdk.id, "python");
   assert.match(show.sdk.install[0], /pypi\/simple/);
@@ -94,7 +94,7 @@ test("sdk list and show expose SDK guidance as JSON commands", async () => {
 
 test("sdk primitives exposes compact agent wiring guidance", async () => {
   const io = harness();
-  assert.equal(await main(["sdk", "primitives", "rails"], io), 0);
+  assert.equal(await main(["sdk", "primitives", "rails", "--json"], io), 0);
   const out = JSON.parse(io.stdout.text);
   assert.equal(out.sdk.id, "rails");
   assert.ok(out.concepts.some((concept) => concept.id === "exceptions"));
@@ -110,7 +110,7 @@ test("sdk doctor detects a frontend package and reports setup checks", async () 
       dependencies: { vite: "^6.0.0", "@rewindrewind/sdk": "^0.3.0" },
     }));
     const io = harness({ cwd: temp, env: { REWINDREWIND_PROJECT_KEY: "rrpub_pub" } });
-    assert.equal(await main(["sdk", "doctor"], io), 0);
+    assert.equal(await main(["sdk", "doctor", "--json"], io), 0);
     const out = JSON.parse(io.stdout.text);
     assert.equal(out.target.id, "browser");
     assert.ok(out.detected.some((item) => item.id === "browser"));
@@ -128,7 +128,7 @@ test("sdk doctor recognizes the existing node package name", async () => {
       dependencies: { hono: "^4.0.0", "@rewindrewind/node": "^0.2.1" },
     }));
     const io = harness({ cwd: temp, env: { REWINDREWIND_PROJECT_KEY: "rrpub_pub" } });
-    assert.equal(await main(["sdk", "doctor"], io), 0);
+    assert.equal(await main(["sdk", "doctor", "--json"], io), 0);
     const out = JSON.parse(io.stdout.text);
     assert.equal(out.target.id, "node");
     assert.ok(out.detected[0].evidence.includes("hono dependency"));
@@ -144,7 +144,7 @@ test("sdk upgrade prints an agent-readable plan without editing files", async ()
   try {
     await writeFile(join(temp, "Gemfile"), "source \"https://rubygems.org\"\ngem \"rails\"\ngem \"rewind_rewind-rails\"\n");
     const io = harness({ cwd: temp });
-    assert.equal(await main(["sdk", "upgrade", "rails", "--mode", "package"], io), 0);
+    assert.equal(await main(["sdk", "upgrade", "rails", "--mode", "package", "--json"], io), 0);
     const out = JSON.parse(io.stdout.text);
     assert.equal(out.target.id, "rails");
     assert.equal(out.mode, "package");
@@ -179,7 +179,7 @@ test("api command sends bearer auth, query params, and json body", async () => {
     },
   });
 
-  const status = await main(["api", "post", "/api/projects/p1/retention/run", "--query", "dry_run=true", "--data", "{\"x\":1}"], io);
+  const status = await main(["api", "post", "/api/projects/p1/retention/run", "--query", "dry_run=true", "--data", "{\"x\":1}", "--json"], io);
 
   assert.equal(status, 0);
   assert.equal(seen[0].url, "https://rw.test/api/projects/p1/retention/run?dry_run=true");
@@ -246,6 +246,7 @@ test("configure writes masked config output and usable config file", async () =>
       "https://rw.test/",
       "--project",
       "project_1",
+      "--json",
     ], io);
 
     assert.equal(status, 0);
@@ -385,13 +386,13 @@ test("init configures from an admin key and stores the project key", async () =>
       },
     });
 
-    const status = await main(["init", "--api-key", "rr_admin_secret", "--base-url", "https://rw.test"], io);
+    const status = await main(["init", "--api-key", "rr_admin_secret", "--base-url", "https://rw.test", "--json"], io);
 
     assert.equal(status, 0);
     const out = JSON.parse(io.stdout.text);
     assert.equal(out.project_id, "p1");
     assert.equal(out.project_key, "rrpub_realkey");
-    assert.match(io.stderr.text, /Front-end exceptions/);
+    assert.equal(io.stderr.text, "");
 
     const file = JSON.parse(await readFile(join(temp, "rewindrewind", "config.json"), "utf8"));
     assert.equal(file.apiKey, "rr_admin_secret");
@@ -415,14 +416,14 @@ test("verify treats async event confirmation misses as a soft warning", async ()
     },
   });
 
-  const status = await main(["verify", "--base-url", "https://rw.test"], io);
+  const status = await main(["verify", "--base-url", "https://rw.test", "--json"], io);
 
   assert.equal(status, 0);
   const out = JSON.parse(io.stdout.text);
   assert.equal(out.ok, true);
   assert.equal(out.failed, 0);
   assert.equal(out.checks.find((check) => check.check === "event confirmed in project").ok, null);
-  assert.match(io.stderr.text, /not found yet/);
+  assert.equal(io.stderr.text, "");
 });
 
 test("configure can set an admin key file pointer instead of an inline key", async () => {
@@ -470,7 +471,7 @@ test("issues update warns when the status did not take effect", async () => {
     fetch: async () => jsonResponse({ ok: true, issue: { id: "i1", status: "open" } }),
   });
 
-  const status = await main(["issues", "update", "i1", "--status", "ignored", "--base-url", "https://rw.test"], io);
+  const status = await main(["issues", "update", "i1", "--status", "ignored", "--base-url", "https://rw.test", "--json"], io);
 
   assert.equal(status, 0);
   assert.equal(JSON.parse(io.stdout.text).issue.status, "open");
@@ -483,7 +484,7 @@ test("issues update is silent when the status sticks", async () => {
     fetch: async () => jsonResponse({ ok: true, issue: { id: "i1", status: "ignored" } }),
   });
 
-  const status = await main(["issues", "update", "i1", "--status", "ignored", "--base-url", "https://rw.test"], io);
+  const status = await main(["issues", "update", "i1", "--status", "ignored", "--base-url", "https://rw.test", "--json"], io);
 
   assert.equal(status, 0);
   assert.equal(JSON.parse(io.stdout.text).issue.status, "ignored");
@@ -492,7 +493,7 @@ test("issues update is silent when the status sticks", async () => {
 
 test("status reports needs_api_key when no admin key is configured", async () => {
   const io = harness({ env: {} });
-  const status = await main(["status", "--base-url", "https://rw.test"], io);
+  const status = await main(["status", "--base-url", "https://rw.test", "--json"], io);
   assert.equal(status, 0);
   const out = JSON.parse(io.stdout.text);
   assert.equal(out.ready, false);
@@ -500,12 +501,43 @@ test("status reports needs_api_key when no admin key is configured", async () =>
   assert.match(out.action, /admin API key/);
 });
 
+test("status defaults to human-readable output", async () => {
+  const io = harness({ env: {} });
+  const status = await main(["status", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  assert.match(io.stdout.text, /RewindRewind status: not ready/);
+  assert.match(io.stdout.text, /Base URL: https:\/\/rw\.test/);
+  assert.match(io.stdout.text, /admin API key/);
+  assert.throws(() => JSON.parse(io.stdout.text));
+});
+
+test("status is not blocked by a stale project key file when admin key is missing", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "rewindrewindcli-status-"));
+  try {
+    await mkdir(join(temp, "rewindrewind"));
+    await writeFile(join(temp, "rewindrewind", "config.json"), JSON.stringify({
+      projectKeyFile: join(temp, "missing-project.key"),
+    }));
+    const io = harness({ env: { XDG_CONFIG_HOME: temp } });
+    const status = await main(["status", "--base-url", "https://rw.test", "--json"], io);
+
+    assert.equal(status, 0);
+    const out = JSON.parse(io.stdout.text);
+    assert.equal(out.ready, false);
+    assert.equal(out.needs_api_key, true);
+    assert.equal(out.project_key_warning, undefined);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("status reports ready when the admin key validates", async () => {
   const io = harness({
     env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub" },
     fetch: async () => jsonResponse({ ok: true, projects: [{ id: "p1", name: "Web", account_id: "a1" }] }),
   });
-  const status = await main(["status", "--base-url", "https://rw.test"], io);
+  const status = await main(["status", "--base-url", "https://rw.test", "--json"], io);
   assert.equal(status, 0);
   const out = JSON.parse(io.stdout.text);
   assert.equal(out.ready, true);
@@ -513,6 +545,42 @@ test("status reports ready when the admin key validates", async () => {
   assert.equal(out.has_project_key, true);
   assert.equal(out.project_id, "p1");
   assert.deepEqual(out.projects, [{ id: "p1", name: "Web" }]);
+});
+
+test("status stays ready and warns when an optional project key is malformed", async () => {
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "not-a-project-key" },
+    fetch: async () => jsonResponse({ ok: true, projects: [{ id: "p1", name: "Web", account_id: "a1" }] }),
+  });
+  const status = await main(["status", "--base-url", "https://rw.test", "--json"], io);
+  assert.equal(status, 0);
+  const out = JSON.parse(io.stdout.text);
+  assert.equal(out.ready, true);
+  assert.equal(out.needs_api_key, false);
+  assert.equal(out.has_project_key, false);
+  assert.match(out.project_key_warning, /project ingestion key/);
+});
+
+test("verify defaults to human-readable output", async () => {
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1" },
+    fetch: async (url) => {
+      const u = String(url);
+      if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
+      if (u.endsWith("/v1/events")) return jsonResponse({ ok: true, event_id: "evt_1" }, 202);
+      if (u.endsWith("/v1/exceptions")) return jsonResponse({ ok: true }, 202);
+      if (u.includes("/api/projects/p1/events")) return jsonResponse({ ok: true, events: [] });
+      return jsonResponse({ ok: true });
+    },
+  });
+
+  const status = await main(["verify", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  assert.match(io.stdout.text, /RewindRewind verify: passed/);
+  assert.match(io.stdout.text, /\[ok\] service health/);
+  assert.match(io.stdout.text, /\[skip\] event confirmed in project - not found yet/);
+  assert.equal(io.stderr.text, "");
 });
 
 function harness(overrides = {}) {

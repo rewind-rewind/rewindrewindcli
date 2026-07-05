@@ -44,7 +44,9 @@ const GLOBAL_OPTIONS = [
   { option: "--project-key-file <path>", summary: "Read the project key from a file." },
   { option: "--project <id>", summary: "Project id. Also REWINDREWIND_PROJECT_ID." },
   { option: "--base-url <url>", summary: `API origin. Default: ${DEFAULT_BASE_URL}` },
-  { option: "--format <json|pretty>", summary: "JSON output format for data commands. Help supports --format json too." },
+  { option: "--json", summary: "Emit compact JSON on stdout for agents and scripts." },
+  { option: "--pretty", summary: "Emit pretty-printed JSON on stdout." },
+  { option: "--format <human|json|pretty>", summary: "Output format. Default: human." },
   { option: "--quiet | --verbose", summary: "Suppress normal output or print request URLs." },
 ];
 
@@ -446,12 +448,12 @@ const HELP_TOPICS = {
     title: "Agent Setup",
     summary: "Deterministic setup order for coding agents.",
     steps: [
-      "Run `rewindrewind status` first.",
+      "Run `rewindrewind status --json` first.",
       "If `needs_api_key` is true, stop and ask the user for an admin API key that starts with rr_.",
-      "Run `rewindrewind init` to fetch and save the public project key.",
-      "Run `rewindrewind sdk doctor` and `rewindrewind sdk primitives <name>` to inspect the app and map hooks.",
+      "Run `rewindrewind init --json` to fetch and save the public project key.",
+      "Run `rewindrewind sdk doctor --json` and `rewindrewind sdk primitives <name> --json` to inspect the app and map hooks.",
       "Wire events and exceptions into the idiomatic framework boundaries.",
-      "Run `rewindrewind verify` and report pass/fail.",
+      "Run `rewindrewind verify --json` and report pass/fail.",
     ],
     see_also: ["help auth", "help sdk", "sdk doctor", "sdk upgrade", `${DEFAULT_BASE_URL}/llms.txt`],
   },
@@ -524,8 +526,8 @@ const HELP_TOPICS = {
     title: "Troubleshooting",
     summary: "Fast checks when setup or ingestion fails.",
     steps: [
-      "Run `rewindrewind status --format pretty` to validate the admin key and selected project.",
-      "Run `rewindrewind config get --format pretty` and confirm baseUrl, projectId, and projectKey.",
+      "Run `rewindrewind status` for a human-readable check, or `rewindrewind status --json` for automation.",
+      "Run `rewindrewind config get` and confirm baseUrl, projectId, and projectKey.",
       "Run `rewindrewind verify --environment development` to exercise service, event, and exception ingestion.",
       "If ingestion commands complain about rr_ vs rrpub_, re-run `rewindrewind init` to fetch the public project key.",
       "Use `rewindrewind --verbose <command>` to print request URLs.",
@@ -563,7 +565,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       configPath: configPath(io),
       baseUrl: normalizeBaseUrl(stringOption(parsed.options, "base-url") ?? env("REWINDREWIND_BASE_URL", io) ?? config.baseUrl ?? DEFAULT_BASE_URL),
       projectId: stringOption(parsed.options, "project") ?? env("REWINDREWIND_PROJECT_ID", io) ?? config.projectId,
-      format: stringOption(parsed.options, "format") ?? env("REWINDREWIND_FORMAT", io) ?? config.format ?? "json",
+      format: outputFormat(parsed.options, io, config),
       quiet: booleanOption(parsed.options, "quiet"),
       verbose: booleanOption(parsed.options, "verbose"),
       options: parsed.options,
@@ -572,7 +574,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     };
 
     const result = await dispatch(ctx);
-    if (result !== undefined && !ctx.quiet) writeOutput(streams.stdout, result, ctx.format);
+    if (result !== undefined && !ctx.quiet) writeOutput(streams.stdout, result, ctx.format, ctx.command);
     return 0;
   } catch (error) {
     const status = error instanceof CliError ? error.status : 1;
@@ -668,7 +670,7 @@ async function dispatch(ctx) {
 
 function writeHelp(stream, args = [], options = {}) {
   const payload = helpPayload(args);
-  const format = stringOption(options, "format");
+  const format = helpFormat(options);
   if (format === "json" || format === "pretty") {
     writeOutput(stream, payload, format);
     return;
@@ -1054,11 +1056,11 @@ Global options:
 ${formatRows(payload.global_options.map((item) => [item.option, item.summary]), 28)}
 
 Machine-readable help:
-  rewindrewind --help --format json
-  rewindrewind help sdk node --format json
-  rewindrewind sdk list
-  rewindrewind sdk primitives node
-  rewindrewind sdk doctor
+  rewindrewind --help --json
+  rewindrewind help sdk node --json
+  rewindrewind sdk list --json
+  rewindrewind sdk primitives node --json
+  rewindrewind sdk doctor --json
 `;
 }
 
@@ -1162,11 +1164,10 @@ function fence(language, code) {
 }
 
 // `status` is the agent's first step: it answers "do we have a working admin
-// key?" without throwing, returning JSON an agent can branch on. If no key is
-// configured the agent should ask the user for one before doing anything else.
+// key?" without throwing. If no key is configured the agent should ask the user
+// for one before doing anything else.
 async function statusCommand(ctx) {
   const adminKey = await resolveKey(ctx, "admin", { optional: true });
-  const projectKey = await resolveKey(ctx, "project", { optional: true });
   const base = { ok: true, base_url: ctx.baseUrl, config_path: ctx.configPath };
   if (!adminKey) {
     return {
@@ -1180,8 +1181,9 @@ async function statusCommand(ctx) {
   if (!probe.ok) {
     return { ...base, ready: false, needs_api_key: true, admin_key: maskSecret(adminKey), error: probe.error, action: "The configured admin key was rejected. Ask the user for a valid rr_ admin key." };
   }
+  const projectKeyProbe = await safe(() => resolveKey(ctx, "project", { optional: true }));
   const projectsList = Array.isArray(probe.value?.projects) ? probe.value.projects : [];
-  return {
+  return compact({
     ...base,
     ready: true,
     needs_api_key: false,
@@ -1189,9 +1191,10 @@ async function statusCommand(ctx) {
     account: projectsList[0]?.account_id ?? null,
     projects: projectsList.map((p) => ({ id: p.id, name: p.name })),
     project_id: ctx.projectId ?? (projectsList.length === 1 ? projectsList[0].id : undefined),
-    has_project_key: Boolean(projectKey),
+    has_project_key: projectKeyProbe.ok && Boolean(projectKeyProbe.value),
+    project_key_warning: projectKeyProbe.ok ? undefined : projectKeyProbe.error,
     surfaces: ["front-end exceptions", "back-end exceptions", "app events"],
-  };
+  });
 }
 
 // `init` turns one admin key into a working setup: it finds the project, reads
@@ -1235,17 +1238,20 @@ async function initCommand(ctx) {
   }
   await saveConfig(next, ctx);
 
-  if (!ctx.quiet) ctx.streams.stderr.write(setupGuide(ctx.baseUrl, project, projectKey));
-  if (booleanOption(ctx.options, "print-env")) {
-    ctx.streams.stderr.write(`\n# Environment variables\nREWINDREWIND_BASE_URL=${ctx.baseUrl}\nREWINDREWIND_PROJECT_ID=${project.id}\nREWINDREWIND_PROJECT_KEY=${projectKey}\n`);
-  }
+  const printEnv = booleanOption(ctx.options, "print-env");
   return {
     ok: true,
     config_path: ctx.configPath,
     base_url: ctx.baseUrl,
     project_id: project.id,
+    project_name: project.name,
     project_key: projectKey,
     auth: apiKeyFile ? { admin_key_file: apiKeyFile } : { admin_key: maskSecret(adminKey) },
+    environment: printEnv ? {
+      REWINDREWIND_BASE_URL: ctx.baseUrl,
+      REWINDREWIND_PROJECT_ID: project.id,
+      REWINDREWIND_PROJECT_KEY: projectKey,
+    } : undefined,
     next_steps: ["rewindrewind verify", "rewindrewind help sdk", `${ctx.baseUrl}/docs/exception-capture-sdk`],
     sdk_guides: Object.keys(SDK_GUIDES).map((id) => ({ id, command: `rewindrewind help sdk ${id}` })),
   };
@@ -1325,17 +1331,10 @@ async function verifyCommand(ctx) {
 
   const passed = checks.filter((c) => c.ok === true).length;
   const failed = checks.filter((c) => c.ok === false);
-  if (!ctx.quiet) {
-    for (const c of checks) {
-      const mark = c.ok === true ? "ok  " : c.ok === false ? "FAIL" : "skip";
-      ctx.streams.stderr.write(`[${mark}] ${c.check}${c.detail ? ` — ${c.detail}` : ""}\n`);
-    }
-    if (pid) ctx.streams.stderr.write(`\nDashboard: ${ctx.baseUrl}/projects/${pid}\n`);
-  }
-  const result = { ok: failed.length === 0, passed, failed: failed.length, checks };
+  const result = { ok: failed.length === 0, passed, failed: failed.length, checks, dashboard: pid ? `${ctx.baseUrl}/projects/${pid}` : undefined };
   if (failed.length > 0) {
     // Surface a non-zero exit for scripts/agents without throwing away the JSON.
-    if (!ctx.quiet) writeOutput(ctx.streams.stdout, result, ctx.format);
+    if (!ctx.quiet) writeOutput(ctx.streams.stdout, result, ctx.format, ctx.command);
     throw new CliError(`verify failed: ${failed.map((c) => c.check).join(", ")}`, 1);
   }
   return result;
@@ -1857,12 +1856,169 @@ function compact(value) {
   return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 }
 
-function writeOutput(stream, value, format) {
+function outputFormat(options, io = {}, config = {}) {
+  if (booleanOption(options, "json")) return "json";
+  if (booleanOption(options, "pretty")) return "pretty";
+  const requested = stringOption(options, "format") ?? env("REWINDREWIND_FORMAT", io) ?? config.format ?? "human";
+  if (!["human", "json", "pretty"].includes(requested)) throw usage(`Unknown output format: ${requested}. Expected human, json, or pretty.`);
+  return requested;
+}
+
+function helpFormat(options) {
+  if (booleanOption(options, "json")) return "json";
+  if (booleanOption(options, "pretty")) return "pretty";
+  const requested = stringOption(options, "format") ?? "human";
+  if (!["human", "json", "pretty"].includes(requested)) throw usage(`Unknown output format: ${requested}. Expected human, json, or pretty.`);
+  return requested;
+}
+
+function writeOutput(stream, value, format, command = []) {
   if (format === "pretty") {
     stream.write(`${JSON.stringify(value, null, 2)}\n`);
     return;
   }
-  stream.write(`${JSON.stringify(value)}\n`);
+  if (format === "json") {
+    stream.write(`${JSON.stringify(value)}\n`);
+    return;
+  }
+  stream.write(renderHumanOutput(value, command));
+}
+
+function renderHumanOutput(value, command = []) {
+  const group = command[0];
+  if (group === "status") return renderStatusOutput(value);
+  if (group === "init") return renderInitOutput(value);
+  if (group === "verify") return renderVerifyOutput(value);
+  if (group === "configure") return renderConfigureOutput(value);
+  if (group === "config") return renderConfigOutput(value);
+  if (group === "sdk") return renderSdkCommandOutput(value, command[1]);
+  return renderGenericOutput(value, titleFromCommand(command));
+}
+
+function renderStatusOutput(value) {
+  const lines = [`RewindRewind status: ${value.ready ? "ready" : "not ready"}`, ""];
+  lines.push(`Base URL: ${value.base_url}`);
+  lines.push(`Config: ${value.config_path}`);
+  if (value.admin_key) lines.push(`Admin key: ${value.admin_key}`);
+  if (value.needs_api_key) {
+    lines.push("", value.action);
+    return `${lines.join("\n")}\n`;
+  }
+  if (value.account) lines.push(`Account: ${value.account}`);
+  const selectedProject = Array.isArray(value.projects) ? value.projects.find((project) => project.id === value.project_id) : undefined;
+  if (value.project_id) {
+    lines.push(`Selected project: ${selectedProject?.name ? `${selectedProject.name} (${value.project_id})` : value.project_id}`);
+  }
+  lines.push(`Project key: ${value.has_project_key ? "configured" : "missing"}`);
+  if (value.project_key_warning) lines.push(`Project key warning: ${value.project_key_warning}`);
+  if (Array.isArray(value.projects)) {
+    lines.push(`Projects: ${value.projects.length} available (run \`rewindrewind projects list\` for details)`);
+  }
+  if (Array.isArray(value.surfaces)) lines.push("", "Surfaces:", ...value.surfaces.map((surface) => `  ${surface}`));
+  return `${lines.join("\n")}\n`;
+}
+
+function renderInitOutput(value) {
+  const lines = [setupGuide(value.base_url, { id: value.project_id, name: value.project_name }, value.project_key).trimEnd()];
+  lines.push("", `Config: ${value.config_path}`);
+  if (value.auth?.admin_key_file) lines.push(`Admin key file: ${value.auth.admin_key_file}`);
+  if (value.auth?.admin_key) lines.push(`Admin key: ${value.auth.admin_key}`);
+  if (value.environment) {
+    lines.push("", "Environment variables:");
+    for (const [key, envValue] of Object.entries(value.environment)) lines.push(`${key}=${envValue}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderVerifyOutput(value) {
+  const lines = [`RewindRewind verify: ${value.ok ? "passed" : "failed"}`, ""];
+  for (const check of value.checks ?? []) {
+    const mark = check.ok === true ? "ok" : check.ok === false ? "FAIL" : "skip";
+    lines.push(`[${mark}] ${check.check}${check.detail ? ` - ${check.detail}` : ""}`);
+  }
+  lines.push("", `Passed: ${value.passed ?? 0}`);
+  lines.push(`Failed: ${value.failed ?? 0}`);
+  if (value.dashboard) lines.push(`Dashboard: ${value.dashboard}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function renderConfigureOutput(value) {
+  const lines = ["Configuration updated", "", `Config: ${value.config_path}`];
+  return `${lines.concat(renderObjectLines(value.configured ?? {}, 0)).join("\n")}\n`;
+}
+
+function renderConfigOutput(value) {
+  const lines = ["RewindRewind config", "", `Config: ${value.config_path}`];
+  return `${lines.concat(renderObjectLines(value.config ?? {}, 0)).join("\n")}\n`;
+}
+
+function renderSdkCommandOutput(value, action) {
+  if (action === "list" || !action) {
+    const lines = ["SDK guides", ""];
+    for (const sdk of value.sdks ?? []) lines.push(`${sdk.id.padEnd(8)} ${sdk.label} - ${sdk.use_when}`);
+    lines.push("", "Use --json for machine-readable concepts and command metadata.");
+    return `${lines.join("\n")}\n`;
+  }
+  if (action === "doctor" || action === "status") {
+    const lines = [`SDK doctor: ${value.target?.label ?? value.target?.id ?? "unknown"}`, "", `Directory: ${value.cwd}`];
+    lines.push("", "Checks:");
+    for (const check of value.checks ?? []) lines.push(`  [${check.ok === true ? "ok" : check.ok === false ? "FAIL" : "skip"}] ${check.id}: ${check.detail}`);
+    if (value.detected?.length) {
+      lines.push("", "Detected:");
+      for (const item of value.detected) lines.push(`  ${item.id} (${item.confidence}): ${item.evidence.join(", ")}`);
+    }
+    return `${lines.join("\n")}\n`;
+  }
+  if (action === "upgrade" || action === "update") {
+    const lines = [`SDK upgrade plan: ${value.target?.label ?? value.target?.id ?? "unknown"}`, "", `Mode: ${value.mode}`];
+    for (const item of value.plan ?? []) lines.push("", `${item.step}:`, `  ${item.command ?? item.purpose}`, item.command ? `  ${item.purpose}` : undefined);
+    return `${lines.filter(Boolean).join("\n")}\n`;
+  }
+  return renderGenericOutput(value, `sdk ${action}`);
+}
+
+function renderGenericOutput(value, title) {
+  if (typeof value !== "object" || value === null) return `${String(value)}\n`;
+  const lines = [title, ""];
+  if (value.ok !== undefined) lines[0] = `${title}: ${value.ok ? "ok" : "failed"}`;
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "ok") continue;
+    lines.push(...renderValueLines(labelize(key), item, 0));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderValueLines(label, value, indent) {
+  const prefix = " ".repeat(indent);
+  if (value === undefined) return [];
+  if (value === null || typeof value !== "object") return [`${prefix}${label}: ${String(value)}`];
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [`${prefix}${label}: none`];
+    if (value.every((item) => item === null || typeof item !== "object")) return [`${prefix}${label}:`, ...value.map((item) => `${prefix}  ${String(item)}`)];
+    return [`${prefix}${label}:`, ...value.flatMap((item) => renderObjectSummary(item, indent + 2))];
+  }
+  return [`${prefix}${label}:`, ...renderObjectLines(value, indent + 2)];
+}
+
+function renderObjectLines(value, indent) {
+  return Object.entries(value).flatMap(([key, item]) => renderValueLines(labelize(key), item, indent));
+}
+
+function renderObjectSummary(value, indent) {
+  const prefix = " ".repeat(indent);
+  if (value === null || typeof value !== "object") return [`${prefix}${String(value)}`];
+  const summaryKeys = ["id", "name", "title", "type", "status", "message", "event_id", "issue_id"];
+  const summary = summaryKeys.filter((key) => value[key] !== undefined).map((key) => `${key}=${value[key]}`).join("  ");
+  if (summary) return [`${prefix}${summary}`];
+  return renderObjectLines(value, indent);
+}
+
+function labelize(value) {
+  return String(value).replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function titleFromCommand(command) {
+  return command.filter(Boolean).join(" ") || "Result";
 }
 
 function requiredOption(options, name) {

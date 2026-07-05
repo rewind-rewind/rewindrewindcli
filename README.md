@@ -1,6 +1,6 @@
 # rewindrewindcli
 
-The RewindRewind command line. Built for humans and agents: no runtime dependencies, JSON output by default, and one command (`init`) that sets up all three surfaces — **front-end exceptions, back-end exceptions, and app events** — from a single key.
+The RewindRewind command line. Built for humans and agents: no runtime dependencies, human-readable output by default, explicit JSON for automation, and one command (`init`) that sets up all three surfaces — **front-end exceptions, back-end exceptions, and app events** — from a single key.
 
 The SDK help is agent-ready: it explains the primitives an agent needs to map into a project (`initialize-client`, request/job exception capture, app events, flush), while keeping framework-specific guidance as compact hook hints instead of trying to codify every framework.
 
@@ -36,14 +36,14 @@ rewindrewind help troubleshooting
 Agents can request structured help:
 
 ```sh
-rewindrewind --help --format json
-rewindrewind help sdk node --format json
-rewindrewind sdk list
-rewindrewind sdk show python
-rewindrewind sdk primitives rails
-rewindrewind sdk doctor
-rewindrewind sdk upgrade
-rewindrewind sdk snippet browser
+rewindrewind --help --json
+rewindrewind help sdk node --json
+rewindrewind sdk list --json
+rewindrewind sdk show python --json
+rewindrewind sdk primitives rails --json
+rewindrewind sdk doctor --json
+rewindrewind sdk upgrade --json
+rewindrewind sdk snippet browser --json
 ```
 
 ## For AI agents (Claude / Codex)
@@ -51,13 +51,13 @@ rewindrewind sdk snippet browser
 Setting this up from an agent? Paste [`AGENTS.md`](AGENTS.md) into your agent — it is a
 self-contained runbook. The flow, in order:
 
-1. **Verify a key first:** `rewindrewind status`. If `needs_api_key` is `true`, the agent
+1. **Verify a key first:** `rewindrewind status --json`. If `needs_api_key` is `true`, the agent
    must stop and ask the user for an `rr_` admin key — never fabricate one.
-2. `rewindrewind init` — configure the project and fetch its public key.
-3. `rewindrewind verify` — confirm all three surfaces work.
+2. `rewindrewind init --json` — configure the project and fetch its public key.
+3. `rewindrewind verify --json` — confirm all three surfaces work.
 
-After a key is configured, the agent can do **everything** through the CLI (JSON in, JSON
-out), including the generic `api` escape hatch for any endpoint.
+After a key is configured, the agent can do **everything** through the CLI. Use `--json`
+for compact machine-readable stdout, including the generic `api` escape hatch for any endpoint.
 
 ## Two kinds of key
 
@@ -145,9 +145,9 @@ rewindrewind help sdk go
 For agent-readable integration hints and upgrade planning:
 
 ```sh
-rewindrewind sdk primitives node      # events vs exceptions, wiring primitives, hook hints
-rewindrewind sdk doctor [name]        # local stack/key/reference checks
-rewindrewind sdk upgrade [name]       # non-mutating upgrade plan for agents or humans
+rewindrewind sdk primitives node --json      # events vs exceptions, wiring primitives, hook hints
+rewindrewind sdk doctor [name] --json        # local stack/key/reference checks
+rewindrewind sdk upgrade [name] --json       # non-mutating upgrade plan for agents or humans
 ```
 
 Agents should inspect the app, use the primitives, then wire RewindRewind into the idiomatic framework boundaries already present in the project. For example, Rails usually means an initializer plus middleware/job hooks; Go usually means explicit middleware/wrappers around `net/http`, framework handlers, workers, or CLIs.
@@ -208,10 +208,13 @@ rewindrewind api get /openapi.json --no-auth
 
 ## Output
 
-JSON on stdout by default (human guidance goes to stderr, so piped output stays clean):
+Human-readable output is the default. Use `--json` for compact JSON and `--pretty` for
+pretty-printed JSON:
 
 ```sh
-rewindrewind events list --limit 1 --format pretty   # pretty-print
+rewindrewind status                                  # human-readable
+rewindrewind status --json                           # compact JSON for scripts
+rewindrewind events list --limit 1 --pretty          # pretty-printed JSON
 rewindrewind retention run --quiet                   # suppress output
 rewindrewind issues list --verbose                   # log request URLs to stderr
 ```

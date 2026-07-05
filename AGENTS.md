@@ -28,7 +28,7 @@ In the steps below, `rewindrewind <command>` means `npx github:bananatron/rewind
 ## Step 1 — Verify we have an API key (do this FIRST)
 
 ```sh
-rewindrewind status
+rewindrewind status --json
 ```
 
 Read the JSON. **If `needs_api_key` is `true`, STOP and ask the user:**
@@ -44,16 +44,17 @@ rewindrewind config set api-key-file /path/to/keyfile   # or point at a file
 export REWINDREWIND_API_KEY=rr_xxx                       # or just use env
 ```
 
-Re-run `rewindrewind status` and confirm `ready: true` before moving on.
+Re-run `rewindrewind status --json` and confirm `ready: true` before moving on.
 
 ## Step 2 — Initialize
 
 ```sh
-rewindrewind init
+rewindrewind init --json
 ```
 
 This finds the project, fetches its **public project key** (`rrpub_…`), saves the
-config, and prints copy-paste setup for all three surfaces. Wire whichever surfaces
+config, and returns setup metadata. Run `rewindrewind init` without `--json` when
+you want the human copy-paste setup for all three surfaces. Wire whichever surfaces
 this project needs into the codebase.
 
 For runtime-specific SDK instructions, ask the CLI instead of guessing:
@@ -63,16 +64,16 @@ rewindrewind help sdk
 rewindrewind help sdk node
 rewindrewind help sdk browser
 rewindrewind help sdk python
-rewindrewind sdk show node --format pretty
-rewindrewind sdk primitives node --format pretty
-rewindrewind sdk doctor
-rewindrewind sdk upgrade
+rewindrewind sdk show node --pretty
+rewindrewind sdk primitives node --pretty
+rewindrewind sdk doctor --pretty
+rewindrewind sdk upgrade --pretty
 ```
 
 ## Step 3 — Verify it works
 
 ```sh
-rewindrewind verify
+rewindrewind verify --json
 ```
 
 This sends a test event and exception and confirms they landed. Expect `ok: true`.
@@ -113,8 +114,8 @@ rewindrewind health | openapi
 rewindrewind api <get|post|patch|delete> <path> [--data <json|@file|->] [--query k=v]
 ```
 
-Output is JSON on stdout (human guidance goes to stderr), so every command is
-scriptable. Add `--format pretty` to read it, `--quiet` to silence it.
+Output is human-readable by default. Add `--json` for compact JSON on stdout,
+`--pretty` for readable JSON, or `--quiet` to silence normal output.
 
 ## Docs
 
@@ -122,4 +123,4 @@ scriptable. Add `--format pretty` to read it, `--quiet` to silence it.
 - OpenAPI: https://rewindrewind.com/openapi.json
 - Agent/LLM index: https://rewindrewind.com/llms.txt
 - CLI directory: `rewindrewind --help`
-- Structured CLI help: `rewindrewind --help --format json`
+- Structured CLI help: `rewindrewind --help --json`
