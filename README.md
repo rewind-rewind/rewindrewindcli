@@ -162,10 +162,10 @@ rewindrewind issues list --status open
 rewindrewind issues get ISSUE_ID
 rewindrewind issues resolve ISSUE_ID --reason "fixed in web@1.4.3"
 rewindrewind issues reopen ISSUE_ID
-rewindrewind issues snooze ISSUE_ID
-rewindrewind issues archive ISSUE_ID
+rewindrewind issues ignore ISSUE_ID --reason "third-party noise"
+rewindrewind issues ignore ISSUE_ID --mode until_time --preset 1w
+rewindrewind issues snooze ISSUE_ID --preset 1d
 rewindrewind issues lifecycle ISSUE_ID
-rewindrewind issues update ISSUE_ID --status ignored
 rewindrewind comments list ISSUE_ID
 rewindrewind comments create ISSUE_ID --body "Deployed fix."
 rewindrewind comments update ISSUE_ID COMMENT_ID --body "Deployed fix in web@1.4.3."
@@ -175,6 +175,14 @@ rewindrewind export --limit 500 --include-raw
 rewindrewind ingestion-health
 rewindrewind retention run
 ```
+
+An issue is triaged into one of two end states, matching the dashboard: **resolve**
+it (you fixed it) or **ignore** it (it's noise you don't want to hear about). Both
+can take optional reactivation flags so the issue auto-reopens on a trigger:
+`--mode until_time --preset 1w`, `--mode new_release`, `--mode occurrences_since_snooze
+--threshold-count 50`, or `--mode manual` (never, until you reopen it). A `snooze` is
+just a timed ignore, so it requires one of those flags. There is no `archive` verb —
+an issue you want gone is `ignore`d.
 
 Comments created or edited through the CLI are attributed to the admin key's
 name and shown with an "API" tag in the dashboard, so it's clear they came from

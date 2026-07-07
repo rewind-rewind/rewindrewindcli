@@ -349,6 +349,44 @@ test("issues resolve posts to the lifecycle endpoint with the admin key", async 
   assert.deepEqual(seen[0].body, { reason: "fixed in web@1.2.3" });
 });
 
+test("issues ignore posts to the ignore endpoint with no rule fields by default", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), auth: init.headers.authorization, body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true, issue: { id: "i1", status: "ignored" } });
+    },
+  });
+
+  const status = await main(["issues", "ignore", "i1", "--reason", "third-party noise"], io);
+
+  assert.equal(status, 0);
+  assert.equal(seen[0].url, "https://rw.test/api/projects/p1/issues/i1/ignore");
+  assert.equal(seen[0].auth, "Bearer rr_admin_secret");
+  assert.deepEqual(seen[0].body, { reason: "third-party noise" });
+});
+
+test("issues ignore forwards reactivation flags as snooze-rule fields", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true, issue: { id: "i1", status: "ignored" } });
+    },
+  });
+
+  const status = await main(
+    ["issues", "ignore", "i1", "--mode", "occurrences_since_snooze", "--threshold-count", "50"],
+    io,
+  );
+
+  assert.equal(status, 0);
+  assert.equal(seen[0].url, "https://rw.test/api/projects/p1/issues/i1/ignore");
+  assert.deepEqual(seen[0].body, { mode: "occurrences_since_snooze", threshold_count: 50 });
+});
+
 test("comments create and update post to the comments endpoint with the admin key", async () => {
   const seen = [];
   const io = harness({

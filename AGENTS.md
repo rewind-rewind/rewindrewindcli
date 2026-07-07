@@ -105,7 +105,7 @@ rewindrewind sdk        list | show <name> | primitives <name> | doctor [name] |
 rewindrewind projects   list | create | get | update | delete
 rewindrewind events     send | batch | list | raw
 rewindrewind exceptions send
-rewindrewind issues     list | get | update | resolve | reopen | snooze | archive | lifecycle
+rewindrewind issues     list | get | update | resolve | reopen | ignore | snooze | lifecycle
 rewindrewind comments   list | create | update | delete
 rewindrewind sourcemaps upload
 rewindrewind export | ingestion-health | retention run

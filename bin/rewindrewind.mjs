@@ -30,7 +30,7 @@ const COMMAND_DIRECTORY = [
   { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
   { command: "exceptions send", summary: "Send an exception payload with the public project key." },
-  { command: "issues list|get|update|resolve|reopen|snooze|archive|lifecycle", summary: "Inspect and manage exception issues." },
+  { command: "issues list|get|update|resolve|reopen|ignore|snooze|lifecycle", summary: "Inspect and manage exception issues." },
   { command: "comments list|create|update|delete", summary: "Work with issue comments." },
   { command: "sourcemaps upload", summary: "Upload JavaScript source maps for a release." },
   { command: "api <method> <path>", summary: "Generic API escape hatch; /v1/* uses project key, /api/* uses admin key." },
@@ -517,6 +517,7 @@ const HELP_TOPICS = {
       "rewindrewind issues list --status open",
       "rewindrewind issues get <issue-id>",
       "rewindrewind issues resolve <issue-id> --reason \"fixed in web@1.4.3\"",
+      "rewindrewind issues ignore <issue-id> --reason \"third-party noise\"",
       "rewindrewind sourcemaps upload --release web@1.4.3 --file dist/app.js.map",
     ],
     see_also: ["help sdk browser", "help sdk node", `${DOCS_URL}#exceptions`],
@@ -1130,7 +1131,7 @@ function commandHelp(name) {
     sdk: { usage: HELP_TOPICS.sdk.commands, see_also: ["help sdk", "sdk primitives node", "sdk doctor", "sdk upgrade"] },
     events: { usage: HELP_TOPICS.events.commands, see_also: ["help events", "help sdk"] },
     exceptions: { usage: HELP_TOPICS.exceptions.commands, see_also: ["help exceptions", "help sdk"] },
-    issues: { usage: ["rewindrewind issues list --status open", "rewindrewind issues get <issue-id>", "rewindrewind issues resolve <issue-id> --reason <text>"], see_also: ["help exceptions"] },
+    issues: { usage: ["rewindrewind issues list --status open", "rewindrewind issues get <issue-id>", "rewindrewind issues resolve <issue-id> --reason <text>", "rewindrewind issues ignore <issue-id> --reason <text>"], see_also: ["help exceptions"] },
     api: { usage: ["rewindrewind api get /api/projects", "rewindrewind api post /v1/events --data @event.json", "rewindrewind api get /openapi.json --no-auth"], see_also: ["openapi"] },
   };
   return map[name];
@@ -1521,10 +1522,15 @@ async function issues(ctx, action) {
     if (!issueId) throw usage("Expected `issues lifecycle <issue-id>`.");
     return request(ctx, "GET", `${base()}/${encodeURIComponent(issueId)}/lifecycle`);
   }
-  if (action === "resolve" || action === "reopen" || action === "snooze" || action === "archive") {
+  if (action === "resolve" || action === "reopen" || action === "ignore" || action === "snooze") {
     if (!issueId) throw usage(`Expected \`issues ${action} <issue-id>\`.`);
-    const reason = stringOption(ctx.options, "reason");
-    return request(ctx, "POST", `${base()}/${encodeURIComponent(issueId)}/${action}`, { body: compact({ reason }) });
+    // resolve/ignore/snooze accept optional reactivation fields (the same ones
+    // the dashboard's "resolve on next release" / "ignore until…" controls send)
+    // so an issue can auto-reopen on a trigger. Plain `resolve`/`ignore` with no
+    // such flags transitions permanently; `snooze` requires them (it is a timed
+    // ignore). `reopen` ignores everything but --reason.
+    const body = bodyFromOptions(ctx.options, ISSUE_REACTIVATION_SPECS);
+    return request(ctx, "POST", `${base()}/${encodeURIComponent(issueId)}/${action}`, { body });
   }
   if (action === "update") {
     if (!issueId) throw usage("Expected `issues update <issue-id>`.");
@@ -1544,8 +1550,23 @@ async function issues(ctx, action) {
     }
     return result;
   }
-  throw usage("Expected an issues action: list, get, update, resolve, reopen, snooze, archive, lifecycle.");
+  throw usage("Expected an issues action: list, get, update, resolve, reopen, ignore, snooze, lifecycle.");
 }
+
+// Reactivation fields shared by the resolve/ignore/snooze verbs, mapped from
+// CLI flags to the API's snooze-rule body keys.
+const ISSUE_REACTIVATION_SPECS = [
+  ["reason", "reason", "string"],
+  ["mode", "mode", "string"],
+  ["preset", "preset", "string"],
+  ["duration-ms", "duration_ms", "number"],
+  ["expires-at", "expires_at", "string"],
+  ["threshold-count", "threshold_count", "number"],
+  ["threshold-window", "threshold_window", "number"],
+  ["threshold-window-unit", "threshold_window_unit", "string"],
+  ["threshold-user-count", "threshold_user_count", "number"],
+  ["release-scope", "release_scope", "string"],
+];
 
 async function comments(ctx, action) {
   const issueId = ctx.command[2];
