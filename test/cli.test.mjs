@@ -370,6 +370,34 @@ test("projects update configures and clears uptime settings", async () => {
   assert.deepEqual(seen[1].body, { uptime_enabled: false, uptime_url: null });
 });
 
+test("health-rules exposes complete CRUD for agents", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true, rules: [], rule: { id: "hr_1" }, archived: true });
+    },
+  });
+  const specification = JSON.stringify({ name: "Errors", measure: { kind: "active_exception_issues" } });
+
+  assert.equal(await main(["health-rules", "list"], io), 0);
+  assert.equal(await main(["health-rules", "get", "hr_1"], io), 0);
+  assert.equal(await main(["health-rules", "create", "--data", specification], io), 0);
+  assert.equal(await main(["health-rules", "update", "hr_1", "--data", specification], io), 0);
+  assert.equal(await main(["health-rules", "delete", "hr_1"], io), 0);
+
+  assert.deepEqual(seen.map(({ method, url }) => [method, url]), [
+    ["GET", "https://rw.test/api/projects/p1/health/rules"],
+    ["GET", "https://rw.test/api/projects/p1/health/rules/hr_1"],
+    ["POST", "https://rw.test/api/projects/p1/health/rules"],
+    ["PATCH", "https://rw.test/api/projects/p1/health/rules/hr_1"],
+    ["DELETE", "https://rw.test/api/projects/p1/health/rules/hr_1"],
+  ]);
+  assert.deepEqual(seen[2].body, JSON.parse(specification));
+  assert.deepEqual(seen[3].body, JSON.parse(specification));
+});
+
 test("issues resolve posts to the lifecycle endpoint with the admin key", async () => {
   const seen = [];
   const io = harness({
