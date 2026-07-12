@@ -28,6 +28,7 @@ const COMMAND_DIRECTORY = [
   { command: "sdk list|show|snippet|env|primitives|doctor|upgrade", summary: "Machine-readable SDK setup pointers, agent hints, doctor checks, and upgrade plans." },
   { command: "configure | config get|set|unset", summary: "Read and write CLI config." },
   { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key." },
+  { command: "health-rules list|get|create|update|delete", summary: "Configure project health rules from JSON files or stdin." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
   { command: "exceptions send", summary: "Send an exception payload with the public project key." },
   { command: "issues list|get|update|resolve|reopen|ignore|snooze|lifecycle", summary: "Inspect and manage exception issues." },
@@ -644,6 +645,9 @@ async function dispatch(ctx) {
       return rawApi(ctx);
     case "projects":
       return projects(ctx, action);
+    case "health-rules":
+    case "healthrules":
+      return healthRules(ctx, action);
     case "events":
       return events(ctx, action);
     case "exceptions":
@@ -1132,6 +1136,7 @@ function commandHelp(name) {
     events: { usage: HELP_TOPICS.events.commands, see_also: ["help events", "help sdk"] },
     exceptions: { usage: HELP_TOPICS.exceptions.commands, see_also: ["help exceptions", "help sdk"] },
     issues: { usage: ["rewindrewind issues list --status open", "rewindrewind issues get <issue-id>", "rewindrewind issues resolve <issue-id> --reason <text>", "rewindrewind issues ignore <issue-id> --reason <text>"], see_also: ["help exceptions"] },
+    "health-rules": { usage: ["rewindrewind health-rules list", "rewindrewind health-rules get <rule-id>", "rewindrewind health-rules create --data @rule.json", "rewindrewind health-rules update <rule-id> --data -", "rewindrewind health-rules delete <rule-id>"], see_also: ["openapi"] },
     api: { usage: ["rewindrewind api get /api/projects", "rewindrewind api post /v1/events --data @event.json", "rewindrewind api get /openapi.json --no-auth"], see_also: ["openapi"] },
   };
   return map[name];
@@ -1447,6 +1452,30 @@ async function projects(ctx, action) {
   }
   if (action === "delete") return request(ctx, "DELETE", `/api/projects/${encodeURIComponent(projectId(ctx))}`);
   throw usage("Expected a projects action: list, create, get, update, delete.");
+}
+
+async function healthRules(ctx, action) {
+  const ruleId = ctx.command[2];
+  const base = `/api/projects/${encodeURIComponent(projectId(ctx))}/health/rules`;
+  if (action === "list") return request(ctx, "GET", base);
+  if (action === "get") {
+    if (!ruleId) throw usage("Expected `health-rules get <rule-id>`.");
+    return request(ctx, "GET", `${base}/${encodeURIComponent(ruleId)}`);
+  }
+  if (action === "create") {
+    const body = await jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+    return request(ctx, "POST", base, { body });
+  }
+  if (action === "update") {
+    if (!ruleId) throw usage("Expected `health-rules update <rule-id> --data <json|@file|->`.");
+    const body = await jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+    return request(ctx, "PATCH", `${base}/${encodeURIComponent(ruleId)}`, { body });
+  }
+  if (action === "delete") {
+    if (!ruleId) throw usage("Expected `health-rules delete <rule-id>`.");
+    return request(ctx, "DELETE", `${base}/${encodeURIComponent(ruleId)}`);
+  }
+  throw usage("Expected a health-rules action: list, get, create, update, delete.");
 }
 
 async function events(ctx, action) {

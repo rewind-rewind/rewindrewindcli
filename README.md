@@ -203,6 +203,18 @@ rewindrewind projects delete
 
 Project-scoped commands take the project from `--project`, `REWINDREWIND_PROJECT_ID`, or the configured `projectId`.
 
+## Health rules
+
+Agents can read and configure the same typed, versioned health rules shown in the dashboard. Create and update accept inline JSON, `@file`, or `-` for stdin; updates replace the complete specification and create a new immutable version.
+
+```sh
+rewindrewind health-rules list
+rewindrewind health-rules get RULE_ID
+rewindrewind health-rules create --data @health-rule.json
+rewindrewind health-rules update RULE_ID --data @health-rule.json
+rewindrewind health-rules delete RULE_ID
+```
+
 ## Generic API wrapper
 
 `api` reaches any endpoint, so nothing in the API is out of reach. It auto-selects the key by path (`/v1/*` → project key, everything else → admin key):
