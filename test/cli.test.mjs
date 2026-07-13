@@ -298,6 +298,42 @@ test("events send uses the project key and merges flags into payload", async () 
   });
 });
 
+test("visits send fires an aggregate signal with the project key", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_API_KEY: "rr_key_secret", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, body: JSON.parse(init.body), headers: init.headers });
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  const status = await main(["visits", "send", "--environment", "production", "--visitor-id", "user-42"], io);
+  assert.equal(status, 0);
+  assert.equal(seen[0].url, "https://rw.test/v1/visit");
+  assert.equal(seen[0].method, "POST");
+  // Aggregate visits authenticate with the public project key, not the admin key.
+  assert.equal(seen[0].headers.authorization, "Bearer rrpub_pub");
+  assert.deepEqual(seen[0].body, { environment: "production", visitor_id: "user-42" });
+});
+
+test("visits list reads the daily series with the admin key", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, auth: init.headers.authorization });
+      return jsonResponse({ ok: true, visits: [{ day: "2026-07-13", total_hits: 3, unique_visitors: 2 }] });
+    },
+  });
+
+  const status = await main(["visits", "list", "--from", "2026-07-01", "--to", "2026-07-13", "--environment", "production"], io);
+  assert.equal(status, 0);
+  assert.equal(seen[0].method, "GET");
+  assert.equal(seen[0].url, "https://rw.test/v1/projects/p1/visits?from=2026-07-01&to=2026-07-13&environment=production");
+  assert.equal(seen[0].auth, "Bearer rr_admin_secret");
+});
+
 test("ingestion refuses an admin key with a helpful error", async () => {
   let called = false;
   const io = harness({

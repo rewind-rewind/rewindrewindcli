@@ -30,6 +30,7 @@ const COMMAND_DIRECTORY = [
   { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key." },
   { command: "health-rules list|get|create|update|delete", summary: "Configure project health rules from JSON files or stdin." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
+  { command: "visits send|list", summary: "Send a daily visit/DAU signal, or read the per-day visit series." },
   { command: "exceptions send", summary: "Send an exception payload with the public project key." },
   { command: "issues list|get|update|resolve|reopen|ignore|snooze|lifecycle", summary: "Inspect and manage exception issues." },
   { command: "comments list|create|update|delete", summary: "Work with issue comments." },
@@ -650,6 +651,8 @@ async function dispatch(ctx) {
       return healthRules(ctx, action);
     case "events":
       return events(ctx, action);
+    case "visits":
+      return visits(ctx, action);
     case "exceptions":
       return exceptions(ctx, action);
     case "sentry":
@@ -1134,6 +1137,7 @@ function commandHelp(name) {
     verify: { usage: ["rewindrewind verify", "rewindrewind verify --environment production"], see_also: ["help troubleshooting"] },
     sdk: { usage: HELP_TOPICS.sdk.commands, see_also: ["help sdk", "sdk primitives node", "sdk doctor", "sdk upgrade"] },
     events: { usage: HELP_TOPICS.events.commands, see_also: ["help events", "help sdk"] },
+    visits: { usage: ["rewindrewind visits send --environment production", "rewindrewind visits send --environment production --visitor-id user-42", "rewindrewind visits list --from 2026-07-01 --to 2026-07-13", "rewindrewind visits list --environment production"], see_also: ["health-rules", "openapi"] },
     exceptions: { usage: HELP_TOPICS.exceptions.commands, see_also: ["help exceptions", "help sdk"] },
     issues: { usage: ["rewindrewind issues list --status open", "rewindrewind issues get <issue-id>", "rewindrewind issues resolve <issue-id> --reason <text>", "rewindrewind issues ignore <issue-id> --reason <text>"], see_also: ["help exceptions"] },
     "health-rules": { usage: ["rewindrewind health-rules list", "rewindrewind health-rules get <rule-id>", "rewindrewind health-rules create --data @rule.json", "rewindrewind health-rules update <rule-id> --data -", "rewindrewind health-rules delete <rule-id>"], see_also: ["openapi"] },
@@ -1512,6 +1516,27 @@ async function events(ctx, action) {
     return request(ctx, "GET", `/api/projects/${encodeURIComponent(projectId(ctx))}/events/${encodeURIComponent(eventId)}/raw`);
   }
   throw usage("Expected an events action: send, batch, list, raw.");
+}
+
+async function visits(ctx, action) {
+  // Pre-aggregated daily visits / DAU (issue #31). `send` fires a single cheap
+  // visit signal with the public project key (never metered, not a durable
+  // event). `list` reads the per-UTC-day series with the admin key.
+  if (action === "send") {
+    return request(ctx, "POST", "/v1/visit", {
+      keyKind: "project",
+      body: compact({
+        environment: stringOption(ctx.options, "environment"),
+        visitor_id: stringOption(ctx.options, "visitor-id") ?? stringOption(ctx.options, "visitor_id"),
+      }),
+    });
+  }
+  if (action === "list") {
+    return request(ctx, "GET", `/v1/projects/${encodeURIComponent(projectId(ctx))}/visits`, {
+      query: queryFromOptions(ctx.options, ["from", "to", "environment"]),
+    });
+  }
+  throw usage("Expected a visits action: send, list.");
 }
 
 async function exceptions(ctx, action) {

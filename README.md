@@ -215,6 +215,25 @@ rewindrewind health-rules update RULE_ID --data @health-rule.json
 rewindrewind health-rules delete RULE_ID
 ```
 
+A `daily_visits` measure asserts against the current UTC day's aggregate visit
+counter (see below) — e.g. `{ "measure": { "kind": "daily_visits", "metric": "unique" }, "operator": "<", "target": 100 }` goes red when today's unique visitors (DAU) drop below 100. Use `"metric": "total"` (the default) for raw visits.
+
+## Visits (DAU)
+
+Pre-aggregated daily visits / DAU are stored as a per-project-per-UTC-day
+counter — never a durable event, never metered. Fire one signal per page load
+with the public project key; read the per-day series with the admin key.
+
+```sh
+rewindrewind visits send --environment production
+rewindrewind visits send --environment production --visitor-id user-42
+rewindrewind visits list --from 2026-07-01 --to 2026-07-13
+rewindrewind visits list --environment production
+```
+
+`visits list` returns a gap-filled series of `{ day, total_hits, unique_visitors }`
+(defaults to the last 30 days). Omitting `--environment` sums across environments.
+
 ## Generic API wrapper
 
 `api` reaches any endpoint, so nothing in the API is out of reach. It auto-selects the key by path (`/v1/*` → project key, everything else → admin key):
