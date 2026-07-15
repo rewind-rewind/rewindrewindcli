@@ -31,12 +31,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bananatron/rewindrewindcli.git"
+    "url": "git+https://github.com/rewind-rewind/rewindrewindcli.git"
   },
   "bugs": {
-    "url": "https://github.com/bananatron/rewindrewindcli/issues"
+    "url": "https://github.com/rewind-rewind/rewindrewindcli/issues"
   },
-  "homepage": "https://github.com/bananatron/rewindrewindcli#readme",
+  "homepage": "https://github.com/rewind-rewind/rewindrewindcli#readme",
   "publishConfig": {
     "access": "public"
   },

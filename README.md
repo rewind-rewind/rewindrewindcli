@@ -9,13 +9,13 @@ The SDK help is agent-ready: it explains the primitives an agent needs to map in
 Run without installing, straight from this public repo (best for one-off setup and agents):
 
 ```sh
-npx github:bananatron/rewindrewindcli init
+npx github:rewind-rewind/rewindrewindcli init
 ```
 
 Install globally for a persistent `rewindrewind` (and `rr`) command:
 
 ```sh
-npm install -g github:bananatron/rewindrewindcli
+npm install -g github:rewind-rewind/rewindrewindcli
 rewindrewind --help
 ```
 
