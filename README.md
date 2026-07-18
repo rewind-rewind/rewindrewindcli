@@ -183,4 +183,26 @@ npm test
 npm run lint
 ```
 
+### Test coverage
+
+Generate a coverage report with Node's built-in test-runner coverage (no extra
+dependencies):
+
+```sh
+npm run coverage
+```
+
+This prints per-file line, branch, and function coverage along with the
+uncovered line ranges. When a machine-readable report is needed (for example, to
+upload to a coverage service), add Node's `lcov` reporter:
+
+```sh
+mkdir -p coverage && node --test --experimental-test-coverage \
+  --test-reporter=lcov --test-reporter-destination=coverage/lcov.info
+```
+
+Coverage artifacts are written under `coverage/`, which is git-ignored. CI runs
+`npm run coverage` on every push and pull request (see
+`.github/workflows/ci.yml`).
+
 Keep the CLI thin. Validate local input, make direct HTTP requests, and preserve API responses for agents and scripts.
