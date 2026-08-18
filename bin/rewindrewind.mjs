@@ -19,6 +19,7 @@ const VERSION = "0.3.0";
 const ADMIN_PREFIX = "rr_";
 const PROJECT_PREFIX = "rrpub_";
 const DOCS_URL = `${DEFAULT_BASE_URL}/docs/exception-capture-sdk`;
+const SAFE_METHODS = new Set(["GET", "HEAD"]);
 
 const COMMAND_DIRECTORY = [
   { command: "status", summary: "Check admin auth; agents should run this first." },
@@ -1713,6 +1714,12 @@ async function request(ctx, method, path, options = {}) {
     init.body = typeof options.body?.pipe === "function" ? options.body : JSON.stringify(options.body);
     headers["content-type"] = options.contentType ?? "application/json";
     if (typeof options.body?.pipe === "function") init.duplex = "half";
+  } else if (!SAFE_METHODS.has(method)) {
+    // A bodyless write still has to declare itself. Sent without a Content-Type,
+    // it reads as a cross-origin form post to the collector's CSRF guard, which
+    // answers a bare 403 before the request reaches its handler — which is how
+    // every management DELETE quietly stopped working.
+    headers["content-type"] = options.contentType ?? "application/json";
   }
 
   if (ctx.verbose) ctx.streams.stderr.write(`${method} ${url}\n`);

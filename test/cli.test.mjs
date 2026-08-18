@@ -189,6 +189,42 @@ test("api command sends bearer auth, query params, and json body", async () => {
   assert.deepEqual(JSON.parse(io.stdout.text), { ok: true, answer: 42 });
 });
 
+test("bodyless writes still declare a json content type", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_prefix_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      return jsonResponse({ ok: true, archived: true });
+    },
+  });
+
+  // A request with no Content-Type reads as a cross-origin form post to the
+  // collector's CSRF guard, which answers 403 before the handler runs. Every
+  // bodyless write — each management DELETE — has to say what it is.
+  const status = await main(["metrics", "delete", "mt_1", "--json"], io);
+
+  assert.equal(status, 0);
+  assert.equal(seen[0].method, "DELETE");
+  assert.equal(seen[0].url, "https://rw.test/api/projects/p1/metrics/mt_1");
+  assert.equal(seen[0].headers["content-type"], "application/json");
+  assert.equal(seen[0].body, undefined);
+});
+
+test("reads do not declare a request content type", async () => {
+  const seen = [];
+  const status = await main(["metrics", "list", "--json"], harness({
+    env: { REWINDREWIND_API_KEY: "rr_prefix_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ headers: init.headers });
+      return jsonResponse({ ok: true, metrics: [] });
+    },
+  }));
+
+  assert.equal(status, 0);
+  assert.equal(seen[0].headers["content-type"], undefined);
+});
+
 test("api command can call public endpoints without auth", async () => {
   const seen = [];
   const status = await main(["api", "get", "/openapi.json", "--base-url", "https://rw.test", "--no-auth"], harness({
