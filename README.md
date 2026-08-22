@@ -34,7 +34,8 @@ npx github:rewind-rewind/rewindrewindcli status
 
 `rewindrewind init` selects a project, fetches its public project key, saves the configuration, and prints setup instructions for three data sources:
 
-1. Front-end exceptions, including uncaught errors and unhandled promises.
+1. Front-end exceptions, including uncaught errors, framework errors reported
+   through a direct `window.onerror` call, and unhandled promises.
 2. Back-end exceptions from servers, jobs, and command-line programs.
 3. App events such as signups, purchases, and feature usage.
 

@@ -92,6 +92,28 @@ test("sdk list and show expose SDK guidance as JSON commands", async () => {
   assert.ok(show.sdk.integration_primitives.some((primitive) => primitive.id === "capture-event"));
 });
 
+test("sdk snippet browser hands out the canonical async pre-load loader", async () => {
+  const io = harness();
+  assert.equal(await main(["sdk", "snippet", "browser", "--json"], io), 0);
+  const out = JSON.parse(io.stdout.text);
+  const loader = out.snippets.find((snippet) => snippet.language === "html");
+
+  assert.ok(loader, "expected an HTML loader snippet");
+  // Order-independent queueing stub, not a bare <script src> + init pair.
+  assert.match(loader.code, /w\.RewindRewind = w\.RewindRewind \|\| \{ _q: \[\] \}/);
+  assert.match(loader.code, /RewindRewind\.init\(\{ key: "rrpub_xxx"/);
+  // All three delivery mechanisms are covered during the async load window,
+  // including direct window.onerror reports from frameworks (issue #124).
+  assert.match(loader.code, /addEventListener\("error", r\._earlyErrorHandler\)/);
+  assert.match(loader.code, /addEventListener\("unhandledrejection", r\._earlyRejectionHandler\)/);
+  assert.match(loader.code, /w\.onerror = r\._earlyOnError/);
+  assert.match(loader.code, /r\._priorOnError = w\.onerror/);
+  // Temporary hooks are installed once, inside the load guard, so a Turbo body
+  // swap re-running the inline snippet cannot stack duplicates.
+  assert.equal(loader.code.match(/if \(!r\._loading\) \{/g).length, 1);
+  assert.ok(loader.code.indexOf("if (!r._loading) {") < loader.code.indexOf("w.onerror = r._earlyOnError"));
+});
+
 test("sdk primitives exposes compact agent wiring guidance", async () => {
   const io = harness();
   assert.equal(await main(["sdk", "primitives", "rails", "--json"], io), 0);

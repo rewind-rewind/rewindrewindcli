@@ -89,9 +89,13 @@ This sends a test event and exception and confirms they landed. Expect `ok: true
 
 ## The three surfaces
 
-1. **Front-end exceptions** — `<script src="https://rewindrewind.com/sdk/v1/rewind.js">`
-   then `RewindRewind.init({ key: "rrpub_…" })`. Auto-captures uncaught errors and
-   unhandled rejections.
+1. **Front-end exceptions** — paste the async pre-load loader from
+   `rewindrewind sdk snippet browser` into `<head>`, then
+   `RewindRewind.init({ key: "rrpub_…" })` in the same inline script. Auto-captures
+   uncaught errors, framework errors reported through a direct `window.onerror`
+   call (Stimulus, Vue, jQuery), and unhandled rejections. Don't hand out a bare
+   `<script src>` + init pair: the bundle loads async, so the init can run first
+   and throw, and errors during the load window are lost.
 2. **Back-end exceptions** — `npm i @rewindrewind/sdk` (Node/Bun), `gem "rewind_rewind"`
    (Ruby), or the Python helper. Or send from the CLI: `rewindrewind exceptions send`.
 3. **App events** — `rewind.captureEvent("checkout.completed", { total: 42 })` in code,
