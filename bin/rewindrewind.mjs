@@ -21,6 +21,51 @@ const PROJECT_PREFIX = "rrpub_";
 const DOCS_URL = `${DEFAULT_BASE_URL}/docs/exception-capture-sdk`;
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
 
+// The canonical async pre-load loader for the hosted browser SDK, mirroring the
+// dashboard "Set up" snippet and the /agents.md runbook on rewindrewind.com.
+//
+// A bare `<script src=...>` followed by an inline `RewindRewind.init(...)` is
+// NOT equivalent and must not be handed to new integrations: the bundle loads
+// async, so the inline init can run first and throw, and nothing is captured
+// during the load window. This stub shims every method (init included) so early
+// calls queue, and installs temporary hooks for all three delivery mechanisms —
+// dispatched `error` events, direct `window.onerror(...)` reports (how Stimulus,
+// Vue, and jQuery report exceptions they caught themselves), and unhandled
+// promise rejections. The hooks live inside the `!r._loading` branch because the
+// inline snippet re-runs on SPA / Hotwire-Turbo body swaps.
+function browserLoaderSnippet(origin, projectKey, indent = "") {
+  const lines = [
+    `<script>`,
+    `  (function (w, d) {`,
+    `    var r = (w.RewindRewind = w.RewindRewind || { _q: [] });`,
+    `    ["init", "captureException", "captureEvent", "captureMessage", "addBreadcrumb", "setIdentity", "setTags", "setContext", "flush"]`,
+    `      .forEach(function (m) { r[m] = r[m] || function () { (r._q = r._q || []).push([m, arguments]); }; });`,
+    `    r._earlyErrorHandler = r._earlyErrorHandler || function (e) {`,
+    `      r.captureException(e.error || e.message, { filename: e.filename, line: e.lineno, column: e.colno });`,
+    `    };`,
+    `    r._earlyRejectionHandler = r._earlyRejectionHandler || function (e) {`,
+    `      if (e.reason instanceof Error || (typeof e.reason === "string" && e.reason.length))`,
+    `        r.captureException(e.reason, { source: "unhandledrejection" });`,
+    `    };`,
+    `    r._earlyOnError = r._earlyOnError || function (msg, src, ln, col, err) {`,
+    `      r.captureException(err || msg, { filename: src, line: ln, column: col });`,
+    `      return r._priorOnError ? r._priorOnError.apply(this, arguments) : undefined;`,
+    `    };`,
+    `    if (!r._loading) {`,
+    `      r._loading = 1;`,
+    `      w.addEventListener("error", r._earlyErrorHandler);`,
+    `      w.addEventListener("unhandledrejection", r._earlyRejectionHandler);`,
+    `      r._priorOnError = w.onerror;`,
+    `      w.onerror = r._earlyOnError;`,
+    `      var s = d.createElement("script"); s.async = 1; s.crossOrigin = "anonymous"; s.src = "${origin}/sdk/v1/rewind.js"; d.head.appendChild(s);`,
+    `    }`,
+    `  })(window, document);`,
+    `  RewindRewind.init({ key: "${projectKey}", environment: "production" });`,
+    `</script>`,
+  ];
+  return lines.join(`\n${indent}`);
+}
+
 const COMMAND_DIRECTORY = [
   { command: "status", summary: "Check admin auth; agents should run this first." },
   { command: "init", summary: "Configure auth, choose a project, fetch the public project key, print setup snippets." },
@@ -107,24 +152,24 @@ const SDK_GUIDES = {
   browser: {
     id: "browser",
     label: "Browser JavaScript",
-    use_when: "Frontend apps that need uncaught error, unhandled rejection, and product event capture.",
+    use_when: "Frontend apps that need uncaught error, framework window.onerror report, unhandled rejection, and product event capture.",
     docs_url: `${DOCS_URL}#javascript-browser-apps`,
-    install: ["<script src=\"https://rewindrewind.com/sdk/v1/rewind.js\"></script>", "or bundled apps: npm install @rewindrewind/sdk"],
+    install: ["the async pre-load loader from `rewindrewind sdk snippet browser` (not a bare <script src> + init pair)", "or bundled apps: npm install @rewindrewind/sdk"],
     env: ["VITE_REWINDREWIND_PROJECT_KEY=rrpub_xxx", "VITE_REWINDREWIND_ENDPOINT=https://rewindrewind.com"],
     files: ["src/observability.ts or your app entrypoint"],
     verify: ["rewindrewind verify", "Trigger a handled test capture from the browser and check issues/events."],
     agent_hints: [
-      "Prefer the CDN script when there is no bundler or when the app wants live SDK updates.",
+      "Prefer the CDN loader when there is no bundler or when the app wants live SDK updates. Paste it verbatim: the queueing stub makes the integration order-independent and covers errors thrown while the bundle is still in flight.",
       "For bundled apps, initialize before route rendering and reuse the exported client for app events.",
     ],
     integration_primitives: [
       { id: "load-sdk", purpose: "Load the browser SDK from CDN or package before app code reports telemetry.", required: true },
       COMMON_PRIMITIVES.initialize,
-      { id: "capture-browser-errors", purpose: "Capture uncaught errors and unhandled promise rejections.", required: true },
+      { id: "capture-browser-errors", purpose: "Capture uncaught errors, framework errors reported through a direct window.onerror call, and unhandled promise rejections.", required: true },
       COMMON_PRIMITIVES.event,
     ],
     hook_hints: [
-      { shape: "plain-html", likely_hooks: ["<head> script tag", "inline RewindRewind.init call after the script"] },
+      { shape: "plain-html", likely_hooks: ["<head> async pre-load loader", "RewindRewind.init call inside the same inline script"] },
       { shape: "bundled-spa", likely_hooks: ["src/observability.ts", "main.tsx/main.jsx before rendering", "router or action handlers for app events"] },
     ],
     upgrade: {
@@ -132,6 +177,11 @@ const SDK_GUIDES = {
       hints: ["CDN mode updates from /sdk/v1/rewind.js automatically.", "Package mode should be checked by the package manager or `rewindrewind sdk upgrade browser`."],
     },
     snippets: [
+      {
+        title: "Load (no build step)",
+        language: "html",
+        code: browserLoaderSnippet(DEFAULT_BASE_URL, "rrpub_xxx"),
+      },
       {
         title: "Initialize",
         language: "ts",
@@ -1279,11 +1329,9 @@ function setupGuide(origin, project, projectKey) {
 RewindRewind is set up for project "${project.name ?? project.id}".
 Project ingestion key (public, safe to embed): ${projectKey}
 
-1) Front-end exceptions — drop two tags in <head> (no build step):
-   <script src="${origin}/sdk/v1/rewind.js"></script>
-   <script>
-     RewindRewind.init({ key: "${projectKey}", environment: "production" });
-   </script>
+1) Front-end exceptions — paste this into <head> (no build step; order-independent,
+   safe to re-run on SPA / Hotwire-Turbo navigations):
+   ${browserLoaderSnippet(origin, projectKey, "   ")}
 
 2) Back-end exceptions — Node/Bun:
    npm i @rewindrewind/sdk
