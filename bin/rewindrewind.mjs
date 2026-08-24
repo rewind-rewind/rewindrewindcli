@@ -549,11 +549,13 @@ const HELP_TOPICS = {
     details: [
       CORE_CONCEPTS[0].summary,
       "Use stable event names and put variable details in JSON properties.",
+      "Event list time filters apply to received_at (delivery time), not the event payload timestamp.",
+      "--since and --until are compatibility aliases for --from and --to.",
     ],
     commands: [
       "rewindrewind events send --type checkout.completed --properties '{\"total\":42}'",
       "rewindrewind events batch --file @events.json",
-      "rewindrewind events list --environment production --limit 50",
+      "rewindrewind events list --from 2026-08-20T00:00:00Z --to 2026-08-21T00:00:00Z --environment production --limit 50",
       "rewindrewind events raw <event-id>",
     ],
     see_also: ["help sdk", `${DOCS_URL}#events`],
@@ -1589,8 +1591,12 @@ async function events(ctx, action) {
     return request(ctx, "POST", "/v1/events/batch", { keyKind: "project", body: Array.isArray(body) ? { events: body } : body });
   }
   if (action === "list") {
+    assertKnownOptions(ctx, "events list", ["limit", "cursor", "from", "to", "since", "until", "type", "environment", "release", "source", "identity_id", "identity-id"]);
+    const query = queryFromOptions(ctx.options, ["limit", "cursor", "from", "to", "type", "environment", "release", "source", "identity_id", "identity-id"]);
+    if (query.from === undefined && ctx.options.since !== undefined) query.from = last(ctx.options.since);
+    if (query.to === undefined && ctx.options.until !== undefined) query.to = last(ctx.options.until);
     return request(ctx, "GET", `/api/projects/${encodeURIComponent(projectId(ctx))}/events`, {
-      query: queryFromOptions(ctx.options, ["limit", "cursor", "type", "environment", "release", "source", "identity_id", "identity-id"]),
+      query,
     });
   }
   if (action === "raw") {
@@ -1888,6 +1894,13 @@ function queryFromOptions(options, names) {
     query[apiName] = last(options[name]);
   }
   return query;
+}
+
+function assertKnownOptions(ctx, command, names) {
+  const globalNames = ["api-key", "api-key-file", "project-key", "project-key-file", "project", "base-url", "json", "pretty", "format", "quiet", "verbose"];
+  const known = new Set([...globalNames, ...names]);
+  const unknown = Object.keys(ctx.options).filter((name) => !known.has(name));
+  if (unknown.length > 0) throw usage(`Unknown option for \`${command}\`: ${unknown.map((name) => `--${name}`).join(", ")}`);
 }
 
 function queryOptions(value) {

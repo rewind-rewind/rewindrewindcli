@@ -356,6 +356,75 @@ test("events send uses the project key and merges flags into payload", async () 
   });
 });
 
+test("events list forwards canonical received-at time filters", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url) => {
+      seen.push(String(url));
+      return jsonResponse({ ok: true, events: [] });
+    },
+  });
+
+  const status = await main([
+    "events",
+    "list",
+    "--from",
+    "2026-08-20T00:00:00Z",
+    "--to",
+    "2026-08-21T00:00:00Z",
+    "--environment",
+    "production",
+    "--limit",
+    "3",
+  ], io);
+
+  assert.equal(status, 0);
+  assert.equal(seen[0], "https://rw.test/api/projects/p1/events?limit=3&from=2026-08-20T00%3A00%3A00Z&to=2026-08-21T00%3A00%3A00Z&environment=production");
+});
+
+test("events list maps since and until aliases to the API time filters", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url) => {
+      seen.push(String(url));
+      return jsonResponse({ ok: true, events: [] });
+    },
+  });
+
+  const status = await main(["events", "list", "--since", "2026-08-20T00:00:00Z", "--until", "2026-08-21T00:00:00Z"], io);
+
+  assert.equal(status, 0);
+  assert.equal(seen[0], "https://rw.test/api/projects/p1/events?from=2026-08-20T00%3A00%3A00Z&to=2026-08-21T00%3A00%3A00Z");
+});
+
+test("events list rejects unknown options instead of silently ignoring them", async () => {
+  let called = false;
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1" },
+    fetch: async () => {
+      called = true;
+      return jsonResponse({ ok: true, events: [] });
+    },
+  });
+
+  const status = await main(["events", "list", "--form", "2026-08-20T00:00:00Z"], io);
+
+  assert.notEqual(status, 0);
+  assert.equal(called, false);
+  assert.match(io.stderr.text, /Unknown option for `events list`: --form/);
+});
+
+test("events help documents canonical and compatible time filters", async () => {
+  const io = harness();
+
+  assert.equal(await main(["help", "events"], io), 0);
+  assert.match(io.stdout.text, /events list --from .* --to /);
+  assert.match(io.stdout.text, /--since.*--until.*aliases/i);
+  assert.match(io.stdout.text, /received_at/);
+});
+
 test("visits send fires an aggregate signal with the project key", async () => {
   const seen = [];
   const io = harness({

@@ -100,9 +100,13 @@ Send and inspect app events:
 
 ```sh
 rewindrewind events send --type checkout.completed --properties '{"plan":"pro","amount":4900}'
-rewindrewind events list --environment production --limit 50
+rewindrewind events list --from 2026-08-20T00:00:00Z --to 2026-08-21T00:00:00Z --environment production --limit 50
 rewindrewind events raw EVENT_ID
 ```
+
+`events list` filters `received_at` (delivery time), not the timestamp in the
+event payload. `--since` and `--until` remain available as compatibility aliases
+for `--from` and `--to`.
 
 Send an exception and manage grouped issues:
 
