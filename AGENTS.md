@@ -78,6 +78,12 @@ rewindrewind verify --json
 
 This sends a test event and exception and confirms they landed. Expect `ok: true`.
 
+The `event confirmed in project` check reads the event back through the management
+API. It needs an admin key, and a project id — taken from `--project`,
+`REWINDREWIND_PROJECT_ID`, config, or resolved from the configured project key.
+Ingestion is async, so the read-back retries for a few seconds before reporting a
+miss; a miss is a soft warning (`skip`), not a failure.
+
 ---
 
 ## How the keys work

@@ -1182,6 +1182,7 @@ function renderSdkHelp(sdk) {
 function renderCommandHelp(command, related) {
   const lines = [command.command, "", command.summary, ""];
   if (related?.usage) lines.push("Usage:", ...related.usage.map((item) => `  ${item}`), "");
+  if (related?.details) lines.push("Details:", ...related.details.map((item) => `  ${item}`), "");
   if (related?.see_also) lines.push("See also:", ...related.see_also.map((item) => `  ${item}`), "");
   return `${lines.join("\n")}\n`;
 }
@@ -1190,7 +1191,18 @@ function commandHelp(name) {
   const map = {
     status: { usage: ["rewindrewind status"], see_also: ["help agent", "help auth"] },
     init: { usage: ["rewindrewind init --api-key rr_xxx", "rewindrewind init --api-key-file /run/secrets/rr.key"], see_also: ["help sdk", "verify"] },
-    verify: { usage: ["rewindrewind verify", "rewindrewind verify --environment production"], see_also: ["help troubleshooting"] },
+    verify: {
+      usage: [
+        "rewindrewind verify",
+        "rewindrewind verify --environment production",
+        "rewindrewind verify --project <project-id>",
+      ],
+      details: [
+        "Sends a test app event and exception, then reads the event back to confirm ingestion.",
+        "The read-back needs an admin key; the project id is taken from --project, REWINDREWIND_PROJECT_ID, config, or resolved from the configured project key.",
+      ],
+      see_also: ["help troubleshooting"],
+    },
     sdk: { usage: HELP_TOPICS.sdk.commands, see_also: ["help sdk", "sdk primitives node", "sdk doctor", "sdk upgrade"] },
     events: { usage: HELP_TOPICS.events.commands, see_also: ["help events", "help sdk"] },
     visits: { usage: ["rewindrewind visits send --environment production", "rewindrewind visits send --environment production --visitor-id user-42", "rewindrewind visits list --from 2026-07-01 --to 2026-07-13", "rewindrewind visits list --environment production"], see_also: ["health-rules", "openapi"] },
@@ -1351,6 +1363,38 @@ Full docs:                 ${origin}/docs/exception-capture-sdk
 `;
 }
 
+// Backoff schedule for verify's read-back. Ingestion is async and typically lands
+// well inside a second; these delays give it ~7.5s total before reporting a miss.
+// A confirmed read breaks out early, so the happy path costs one short pause.
+// REWINDREWIND_VERIFY_CONFIRM_DELAYS_MS overrides it (comma-separated ms) for CI
+// and tests that should not spend real time waiting.
+const DEFAULT_VERIFY_CONFIRM_DELAYS_MS = [250, 750, 1500, 2000, 3000];
+
+function verifyConfirmDelays(ctx) {
+  const raw = env("REWINDREWIND_VERIFY_CONFIRM_DELAYS_MS", ctx.io);
+  if (!raw) return DEFAULT_VERIFY_CONFIRM_DELAYS_MS;
+  const parsed = raw.split(",").map((part) => Number(part.trim())).filter((n) => Number.isFinite(n) && n >= 0);
+  return parsed.length > 0 ? parsed : DEFAULT_VERIFY_CONFIRM_DELAYS_MS;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// verify's read-back needs a project id, but most configs only carry the project
+// key (`init` stores both; `config set project-key` does not). Rather than skip
+// the check, resolve the id from the key we are already sending with.
+async function resolveVerifyProjectId(ctx) {
+  const explicit = stringOption(ctx.options, "project") ?? ctx.projectId;
+  if (explicit) return explicit;
+  const projectKey = await resolveKey(ctx, "project", { optional: true });
+  if (!projectKey) return undefined;
+  const listed = await safe(() => request(ctx, "GET", "/api/projects"));
+  if (!listed.ok) return undefined;
+  const projects = listed.value?.projects ?? [];
+  return projects.find((project) => project?.public_key === projectKey)?.id;
+}
+
 // `verify` exercises each surface end to end: health, an app event, an
 // exception, then confirms the event was stored via the management API.
 async function verifyCommand(ctx) {
@@ -1381,17 +1425,40 @@ async function verifyCommand(ctx) {
   }));
   checks.push({ check: "exception send", surface: "exceptions", ...outcome(exception, (d) => d?.ok === true) });
 
-  // Confirm the event landed (best-effort — needs an admin key and may lag behind
-  // async ingestion, so a miss here is a soft warning, not a hard failure).
+  // Confirm the event landed (best-effort — needs an admin key, so a miss here is
+  // a soft warning, not a hard failure). Ingestion is async, so poll with backoff
+  // rather than reading once: a single immediate read almost always loses the race.
   let confirmed;
-  const pid = stringOption(ctx.options, "project") ?? ctx.projectId;
-  if (pid && (await resolveKey(ctx, "admin", { optional: true }))) {
-    const found = await safe(() => request(ctx, "GET", `/api/projects/${encodeURIComponent(pid)}/events`, { query: { type: "rewindrewind.cli.verify", limit: 20 } }));
-    const events = found.ok ? (found.value?.events ?? []) : [];
-    confirmed = events.some((e) => JSON.stringify(e).includes(marker));
-    checks.push({ check: "event confirmed in project", surface: "app events", ok: !found.ok ? false : confirmed ? true : null, detail: !found.ok ? found.error : confirmed ? "found" : "not found yet (ingestion may be async)" });
+  const hasAdmin = Boolean(await resolveKey(ctx, "admin", { optional: true }));
+  const pid = hasAdmin ? await resolveVerifyProjectId(ctx) : (stringOption(ctx.options, "project") ?? ctx.projectId);
+  if (pid && hasAdmin) {
+    const delays = verifyConfirmDelays(ctx);
+    let found;
+    for (const delay of delays) {
+      await sleep(delay);
+      found = await safe(() => request(ctx, "GET", `/api/projects/${encodeURIComponent(pid)}/events`, { query: { type: "rewindrewind.cli.verify", limit: 20 } }));
+      // A read error is worth another try; ingestion lag is the common case.
+      const events = found.ok ? (found.value?.events ?? []) : [];
+      confirmed = events.some((e) => JSON.stringify(e).includes(marker));
+      if (confirmed) break;
+    }
+    const waitedMs = delays.reduce((a, b) => a + b, 0);
+    const waited = waitedMs >= 1000 ? `${Math.round(waitedMs / 1000)}s` : `${waitedMs}ms`;
+    checks.push({
+      check: "event confirmed in project",
+      surface: "app events",
+      ok: !found.ok ? false : confirmed ? true : null,
+      detail: !found.ok ? found.error : confirmed ? "found" : `not found after ${waited} (ingestion may still be catching up)`,
+    });
   } else {
-    checks.push({ check: "event confirmed in project", surface: "app events", ok: null, detail: "skipped (set an admin key and --project to confirm)" });
+    checks.push({
+      check: "event confirmed in project",
+      surface: "app events",
+      ok: null,
+      detail: hasAdmin
+        ? "skipped (no project id — pass --project, set REWINDREWIND_PROJECT_ID, or run `rewindrewind init`)"
+        : "skipped (no admin key — pass --api-key or run `rewindrewind init` to confirm)",
+    });
   }
 
   const passed = checks.filter((c) => c.ok === true).length;
