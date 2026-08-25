@@ -73,7 +73,7 @@ const COMMAND_DIRECTORY = [
   { command: "help [topic]", summary: "Show task help. Topics: agent, auth, sdk, events, exceptions, troubleshooting." },
   { command: "sdk list|show|snippet|env|primitives|doctor|upgrade", summary: "Machine-readable SDK setup pointers, agent hints, doctor checks, and upgrade plans." },
   { command: "configure | config get|set|unset", summary: "Read and write CLI config." },
-  { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key." },
+  { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key. `delete` disables a project; it stays listed, marked disabled." },
   { command: "health-rules list|get|create|update|delete", summary: "Configure project health rules from JSON files or stdin." },
   { command: "metrics list|get|create|update|delete|evaluate", summary: "Configure project dashboard metrics from JSON files or stdin." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
@@ -2257,7 +2257,10 @@ function renderObjectSummary(value, indent) {
   if (definition) return [`${prefix}${definition}`];
   const summaryKeys = ["id", "name", "title", "type", "status", "message", "event_id", "issue_id"];
   const summary = summaryKeys.filter((key) => value[key] !== undefined).map((key) => `${key}=${value[key]}`).join("  ");
-  if (summary) return [`${prefix}${summary}`];
+  // `projects delete` is a soft delete: it stamps disabled_at and leaves the row
+  // in place. Without a marker a disabled project reads as a live one, so the
+  // delete looks like it silently did nothing.
+  if (summary) return [`${prefix}${summary}${value.disabled_at ? "  disabled" : ""}`];
   return renderObjectLines(value, indent);
 }
 
