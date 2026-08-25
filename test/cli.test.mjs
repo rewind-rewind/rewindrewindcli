@@ -934,6 +934,26 @@ test("verify names the missing piece when there is no admin key", async () => {
   assert.doesNotMatch(io.stdout.text, /--project to confirm/);
 });
 
+test("projects list marks a soft-deleted project as disabled", async () => {
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret" },
+    fetch: async () => jsonResponse({
+      ok: true,
+      projects: [
+        { id: "p1", name: "Live" },
+        { id: "p2", name: "Gone", disabled_at: "2026-08-25T19:44:50.362Z" },
+      ],
+    }),
+  });
+
+  const status = await main(["projects", "list", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  assert.match(io.stdout.text, /id=p2  name=Gone  disabled/);
+  // A live project must not pick up the marker.
+  assert.match(io.stdout.text, /id=p1  name=Live\n/);
+});
+
 test("verify help documents --project and how the read-back resolves it", async () => {
   const io = harness({});
   const status = await main(["verify", "--help"], io);
