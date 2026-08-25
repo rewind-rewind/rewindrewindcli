@@ -9,6 +9,9 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { main, parseArgv } from "../bin/rewindrewind.mjs";
 
+// verify polls for async ingestion; tests should not spend real seconds waiting.
+const NO_WAIT = { REWINDREWIND_VERIFY_CONFIRM_DELAYS_MS: "0,0" };
+
 const execFileP = promisify(execFile);
 const thisDir = dirname(fileURLToPath(import.meta.url));
 
@@ -673,7 +676,7 @@ test("init configures from an admin key and stores the project key", async () =>
 
 test("verify treats async event confirmation misses as a soft warning", async () => {
   const io = harness({
-    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1" },
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1", ...NO_WAIT },
     fetch: async (url) => {
       const u = String(url);
       if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
@@ -831,7 +834,7 @@ test("status stays ready and warns when an optional project key is malformed", a
 
 test("verify defaults to human-readable output", async () => {
   const io = harness({
-    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1" },
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1", ...NO_WAIT },
     fetch: async (url) => {
       const u = String(url);
       if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
@@ -847,8 +850,97 @@ test("verify defaults to human-readable output", async () => {
   assert.equal(status, 0);
   assert.match(io.stdout.text, /RewindRewind verify: passed/);
   assert.match(io.stdout.text, /\[ok\] service health/);
-  assert.match(io.stdout.text, /\[skip\] event confirmed in project - not found yet/);
+  assert.match(io.stdout.text, /\[skip\] event confirmed in project - not found after/);
   assert.equal(io.stderr.text, "");
+});
+
+test("verify confirms the event once ingestion catches up", async () => {
+  let reads = 0;
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1", ...NO_WAIT },
+    fetch: async (url, init) => {
+      const u = String(url);
+      if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
+      if (u.endsWith("/v1/events")) {
+        const body = JSON.parse(init.body);
+        marker = body.properties.marker;
+        return jsonResponse({ ok: true, event_id: "evt_1" }, 202);
+      }
+      if (u.endsWith("/v1/exceptions")) return jsonResponse({ ok: true }, 202);
+      if (u.includes("/api/projects/p1/events")) {
+        reads += 1;
+        // First read loses the race with async ingestion; the second finds it.
+        return jsonResponse({ ok: true, events: reads < 2 ? [] : [{ id: "e1", properties: { marker } }] });
+      }
+      return jsonResponse({ ok: true });
+    },
+  });
+  let marker;
+
+  const status = await main(["verify", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  assert.ok(reads >= 2, `expected a retry, got ${reads} read(s)`);
+  assert.match(io.stdout.text, /\[ok\] event confirmed in project - found/);
+});
+
+test("verify resolves the project id from the project key when none is configured", async () => {
+  let confirmUrl;
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_KEY: "rrpub_pub", ...NO_WAIT },
+    fetch: async (url, init) => {
+      const u = String(url);
+      if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
+      if (u.endsWith("/v1/events")) {
+        marker = JSON.parse(init.body).properties.marker;
+        return jsonResponse({ ok: true, event_id: "evt_1" }, 202);
+      }
+      if (u.endsWith("/v1/exceptions")) return jsonResponse({ ok: true }, 202);
+      if (u.endsWith("/api/projects")) {
+        return jsonResponse({ ok: true, projects: [{ id: "other", public_key: "rrpub_nope" }, { id: "p9", public_key: "rrpub_pub" }] });
+      }
+      if (u.includes("/events")) {
+        confirmUrl = u;
+        return jsonResponse({ ok: true, events: [{ id: "e1", properties: { marker } }] });
+      }
+      return jsonResponse({ ok: true });
+    },
+  });
+  let marker;
+
+  const status = await main(["verify", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  assert.ok(confirmUrl?.includes("/api/projects/p9/events"), `resolved wrong project: ${confirmUrl}`);
+  assert.match(io.stdout.text, /\[ok\] event confirmed in project - found/);
+});
+
+test("verify names the missing piece when there is no admin key", async () => {
+  const io = harness({
+    env: { REWINDREWIND_PROJECT_KEY: "rrpub_pub", REWINDREWIND_PROJECT_ID: "p1", ...NO_WAIT },
+    fetch: async (url) => {
+      const u = String(url);
+      if (u.endsWith("/api/health")) return jsonResponse({ ok: true });
+      if (u.endsWith("/v1/events")) return jsonResponse({ ok: true, event_id: "evt_1" }, 202);
+      if (u.endsWith("/v1/exceptions")) return jsonResponse({ ok: true }, 202);
+      return jsonResponse({ ok: true });
+    },
+  });
+
+  const status = await main(["verify", "--base-url", "https://rw.test"], io);
+
+  assert.equal(status, 0);
+  assert.match(io.stdout.text, /\[skip\] event confirmed in project - skipped \(no admin key/);
+  assert.doesNotMatch(io.stdout.text, /--project to confirm/);
+});
+
+test("verify help documents --project and how the read-back resolves it", async () => {
+  const io = harness({});
+  const status = await main(["verify", "--help"], io);
+  assert.equal(status, 0);
+  assert.match(io.stdout.text, /rewindrewind verify --project <project-id>/);
+  assert.match(io.stdout.text, /Details:/);
+  assert.match(io.stdout.text, /read-back needs an admin key/);
 });
 
 function harness(overrides = {}) {
