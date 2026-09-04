@@ -74,6 +74,8 @@ const COMMAND_DIRECTORY = [
   { command: "sdk list|show|snippet|env|primitives|doctor|upgrade", summary: "Machine-readable SDK setup pointers, agent hints, doctor checks, and upgrade plans." },
   { command: "configure | config get|set|unset", summary: "Read and write CLI config." },
   { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key. `delete` disables a project; it stays listed, marked disabled." },
+  { command: "members list|invite|role|remove", summary: "Manage account members: invite by email, change a role, remove someone." },
+  { command: "invites list|get|resend|revoke", summary: "Track invites as pending, accepted, or expired; resend or revoke one." },
   { command: "health-rules list|get|create|update|delete", summary: "Configure project health rules from JSON files or stdin." },
   { command: "metrics list|get|create|update|delete|evaluate", summary: "Configure project dashboard metrics from JSON files or stdin." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
@@ -700,6 +702,11 @@ async function dispatch(ctx) {
       return rawApi(ctx);
     case "projects":
       return projects(ctx, action);
+    case "members":
+      return members(ctx, action);
+    case "invites":
+    case "invitations":
+      return invites(ctx, action);
     case "health-rules":
     case "healthrules":
       return healthRules(ctx, action);
@@ -1208,6 +1215,35 @@ function commandHelp(name) {
     visits: { usage: ["rewindrewind visits send --environment production", "rewindrewind visits send --environment production --visitor-id user-42", "rewindrewind visits list --from 2026-07-01 --to 2026-07-13", "rewindrewind visits list --environment production"], see_also: ["health-rules", "openapi"] },
     exceptions: { usage: HELP_TOPICS.exceptions.commands, see_also: ["help exceptions", "help sdk"] },
     issues: { usage: ["rewindrewind issues list --status open", "rewindrewind issues get <issue-id>", "rewindrewind issues resolve <issue-id> --reason <text>", "rewindrewind issues ignore <issue-id> --reason <text>"], see_also: ["help exceptions"] },
+    members: {
+      usage: [
+        "rewindrewind members list",
+        "rewindrewind members invite --email teammate@example.com --role member",
+        "rewindrewind members role <member-id> --role admin",
+        "rewindrewind members remove <member-id>",
+      ],
+      details: [
+        "Roles are admin (account settings, billing, API keys, members) or member (projects and issues).",
+        "An invited email that already has a RewindRewind user is granted the membership immediately; a new email gets it when the emailed link is used.",
+        "`role` and `remove` take a member id, which `members list` prints. The account's last admin cannot be demoted or removed.",
+      ],
+      see_also: ["invites", "help auth"],
+    },
+    invites: {
+      usage: [
+        "rewindrewind invites list",
+        "rewindrewind invites list --status pending",
+        "rewindrewind invites get <invitation-id>",
+        "rewindrewind invites resend <invitation-id>",
+        "rewindrewind invites revoke <invitation-id>",
+      ],
+      details: [
+        "Status is pending, accepted, or expired; --status filters the list and also accepts all.",
+        "Invites expire 24 hours after they are sent. `resend` reissues the email and restarts that window.",
+        "An invite reads as accepted once its email holds a membership, including an invite sent to an existing user.",
+      ],
+      see_also: ["members"],
+    },
     "health-rules": { usage: ["rewindrewind health-rules list", "rewindrewind health-rules get <rule-id>", "rewindrewind health-rules create --data @rule.json", "rewindrewind health-rules update <rule-id> --data -", "rewindrewind health-rules delete <rule-id>"], see_also: ["metrics", "openapi"] },
     metrics: { usage: ["rewindrewind metrics list", "rewindrewind metrics get <metric-id>", "rewindrewind metrics create --data @metric.json", "rewindrewind metrics update <metric-id> --data -", "rewindrewind metrics delete <metric-id>", "rewindrewind metrics evaluate"], see_also: ["health-rules", "openapi"] },
     api: { usage: ["rewindrewind api get /api/projects", "rewindrewind api post /v1/events --data @event.json", "rewindrewind api get /openapi.json --no-auth"], see_also: ["openapi"] },
@@ -1578,6 +1614,60 @@ async function projects(ctx, action) {
   }
   if (action === "delete") return request(ctx, "DELETE", `/api/projects/${encodeURIComponent(projectId(ctx))}`);
   throw usage("Expected a projects action: list, create, get, update, delete.");
+}
+
+// Account members and their invites. Both live on the account an admin key is
+// already scoped to, so --account-id is only needed for cookie auth on a user
+// who belongs to more than one account.
+async function members(ctx, action) {
+  const memberId = ctx.command[2];
+  const base = "/api/organization/members";
+  const accountQuery = queryFromOptions(ctx.options, ["account-id"]);
+  if (!action || action === "list") return request(ctx, "GET", base, { query: accountQuery });
+  if (action === "invite" || action === "add") {
+    return request(ctx, "POST", base, {
+      body: compact({
+        email: requiredOption(ctx.options, "email"),
+        role: stringOption(ctx.options, "role"),
+        account_id: stringOption(ctx.options, "account-id"),
+      }),
+    });
+  }
+  if (action === "role") {
+    if (!memberId) throw usage("Expected `members role <member-id> --role admin|member`.");
+    return request(ctx, "PATCH", `${base}/${encodeURIComponent(memberId)}`, {
+      body: compact({ role: requiredOption(ctx.options, "role"), account_id: stringOption(ctx.options, "account-id") }),
+    });
+  }
+  if (action === "remove") {
+    if (!memberId) throw usage("Expected `members remove <member-id>`.");
+    return request(ctx, "DELETE", `${base}/${encodeURIComponent(memberId)}`, { query: accountQuery });
+  }
+  throw usage("Expected a members action: list, invite, role, remove.");
+}
+
+async function invites(ctx, action) {
+  const invitationId = ctx.command[2];
+  const base = "/api/organization/invites";
+  const accountQuery = queryFromOptions(ctx.options, ["account-id"]);
+  if (!action || action === "list") {
+    return request(ctx, "GET", base, { query: { ...accountQuery, ...queryFromOptions(ctx.options, ["status"]) } });
+  }
+  if (action === "get" || action === "status") {
+    if (!invitationId) throw usage("Expected `invites get <invitation-id>`.");
+    return request(ctx, "GET", `${base}/${encodeURIComponent(invitationId)}`, { query: accountQuery });
+  }
+  if (action === "resend") {
+    if (!invitationId) throw usage("Expected `invites resend <invitation-id>`.");
+    return request(ctx, "POST", `${base}/${encodeURIComponent(invitationId)}/resend`, {
+      body: compact({ account_id: stringOption(ctx.options, "account-id") }),
+    });
+  }
+  if (action === "revoke" || action === "delete") {
+    if (!invitationId) throw usage("Expected `invites revoke <invitation-id>`.");
+    return request(ctx, "DELETE", `${base}/${encodeURIComponent(invitationId)}`, { query: accountQuery });
+  }
+  throw usage("Expected an invites action: list, get, resend, revoke.");
 }
 
 async function healthRules(ctx, action) {
@@ -2138,6 +2228,8 @@ function renderHumanOutput(value, command = []) {
   if (group === "configure") return renderConfigureOutput(value);
   if (group === "config") return renderConfigOutput(value);
   if (group === "sdk") return renderSdkCommandOutput(value, command[1]);
+  if (group === "members") return renderMembersOutput(value, command[1]);
+  if (group === "invites" || group === "invitations") return renderInvitesOutput(value, command[1]);
   return renderGenericOutput(value, titleFromCommand(command));
 }
 
@@ -2221,6 +2313,65 @@ function renderSdkCommandOutput(value, action) {
     return `${lines.filter(Boolean).join("\n")}\n`;
   }
   return renderGenericOutput(value, `sdk ${action}`);
+}
+
+// An invite's whole point is its status, so the human view leads with it rather
+// than dumping the record the generic renderer would print.
+function inviteSummaryLine(invite) {
+  const when = invite.status === "accepted"
+    ? (invite.accepted_at ? `accepted ${invite.accepted_at}` : "already a member")
+    : invite.status === "expired"
+      ? `expired ${invite.expires_at}`
+      : `expires ${invite.expires_at}`;
+  return `${String(invite.status ?? "?").padEnd(9)} ${String(invite.email ?? "").padEnd(32)} ${String(invite.role ?? "").padEnd(7)} ${when}  ${invite.id ?? ""}`;
+}
+
+function inviteDetailLines(invite) {
+  if (!invite) return ["No invite returned."];
+  return [
+    `Email: ${invite.email}`,
+    `Role: ${invite.role}`,
+    `Status: ${invite.status}`,
+    `Expires: ${invite.expires_at}`,
+    invite.accepted_at ? `Accepted: ${invite.accepted_at}` : undefined,
+    invite.invited_by?.email ? `Invited by: ${invite.invited_by.email}` : "Invited by: admin API key",
+    `Invite id: ${invite.id}`,
+  ].filter(Boolean);
+}
+
+function renderMembersOutput(value, action) {
+  if (action === "invite" || action === "add") {
+    const lines = ["Invite sent", "", ...inviteDetailLines(value.invite), ""];
+    lines.push(value.member
+      ? `Membership granted now: ${value.member.email} is ${value.member.role} (member id ${value.member.id})`
+      : "The invitee joins when they use the emailed link.");
+    return `${lines.join("\n")}\n`;
+  }
+  if (action === "role") return `Role updated: ${value.member?.email} is now ${value.member?.role}\n`;
+  if (action === "remove") return `Removed: ${value.removed?.email} (${value.removed?.role})\n`;
+  const members = value.members ?? [];
+  const invites = value.invites ?? [];
+  const lines = [`Organization: ${value.account?.name ?? "?"} (${value.account?.id ?? "?"})`, "", "Members:"];
+  if (members.length === 0) lines.push("  none");
+  for (const member of members) {
+    lines.push(`  ${String(member.role).padEnd(7)} ${String(member.email).padEnd(32)} ${member.name ?? ""}  ${member.id}`);
+  }
+  lines.push("", "Invites:");
+  if (invites.length === 0) lines.push("  none");
+  for (const invite of invites) lines.push(`  ${inviteSummaryLine(invite)}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function renderInvitesOutput(value, action) {
+  if (action === "revoke" || action === "delete") return `Invite revoked: ${value.revoked?.email}\n`;
+  if (action === "resend") return `Invite resent\n\n${inviteDetailLines(value.invite).join("\n")}\n`;
+  if (value.invite) return `${inviteDetailLines(value.invite).join("\n")}\n`;
+  const invites = value.invites ?? [];
+  const scope = value.status && value.status !== "all" ? ` (${value.status})` : "";
+  const lines = [`Invites${scope}`, ""];
+  if (invites.length === 0) lines.push("  none");
+  for (const invite of invites) lines.push(`  ${inviteSummaryLine(invite)}`);
+  return `${lines.join("\n")}\n`;
 }
 
 function renderGenericOutput(value, title) {

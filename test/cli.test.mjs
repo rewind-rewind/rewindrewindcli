@@ -996,6 +996,125 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+test("members and invites cover the whole membership lifecycle", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true, account: { id: "acct_1", name: "Acme" }, members: [], invites: [], invite: { id: "inv_1" }, member: { id: "mem_1" } });
+    },
+  });
+
+  assert.equal(await main(["members", "list"], io), 0);
+  assert.equal(await main(["members", "invite", "--email", "teammate@example.com", "--role", "admin"], io), 0);
+  assert.equal(await main(["members", "role", "mem_1", "--role", "member"], io), 0);
+  assert.equal(await main(["members", "remove", "mem_1"], io), 0);
+  assert.equal(await main(["invites", "list", "--status", "pending"], io), 0);
+  assert.equal(await main(["invites", "get", "inv_1"], io), 0);
+  assert.equal(await main(["invites", "resend", "inv_1"], io), 0);
+  assert.equal(await main(["invites", "revoke", "inv_1"], io), 0);
+
+  assert.deepEqual(seen.map(({ method, url }) => [method, url]), [
+    ["GET", "https://rw.test/api/organization/members"],
+    ["POST", "https://rw.test/api/organization/members"],
+    ["PATCH", "https://rw.test/api/organization/members/mem_1"],
+    ["DELETE", "https://rw.test/api/organization/members/mem_1"],
+    ["GET", "https://rw.test/api/organization/invites?status=pending"],
+    ["GET", "https://rw.test/api/organization/invites/inv_1"],
+    ["POST", "https://rw.test/api/organization/invites/inv_1/resend"],
+    ["DELETE", "https://rw.test/api/organization/invites/inv_1"],
+  ]);
+  assert.deepEqual(seen[1].body, { email: "teammate@example.com", role: "admin" });
+  assert.deepEqual(seen[2].body, { role: "member" });
+});
+
+test("members commands need an admin key, not a project key", async () => {
+  const io = harness({ env: { REWINDREWIND_PROJECT_KEY: "rrpub_public" } });
+  assert.notEqual(await main(["members", "list", "--base-url", "https://rw.test"], io), 0);
+  assert.match(io.stderr.text, /Missing admin key/);
+});
+
+test("members list reads as a roster with each invite's status", async () => {
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async () => jsonResponse({
+      ok: true,
+      account: { id: "acct_1", name: "Acme" },
+      members: [{ id: "mem_1", user_id: "u1", email: "owner@example.com", name: "Owner", role: "admin" }],
+      invites: [
+        { id: "inv_1", email: "new@example.com", role: "member", status: "pending", expires_at: "2026-09-04T00:00:00.000Z" },
+        { id: "inv_2", email: "old@example.com", role: "admin", status: "expired", expires_at: "2026-08-01T00:00:00.000Z" },
+        { id: "inv_3", email: "in@example.com", role: "member", status: "accepted", accepted_at: "2026-08-30T00:00:00.000Z" },
+      ],
+    }),
+  });
+
+  assert.equal(await main(["members", "list"], io), 0);
+  assert.match(io.stdout.text, /Organization: Acme \(acct_1\)/);
+  assert.match(io.stdout.text, /admin\s+owner@example\.com\s+Owner\s+mem_1/);
+  assert.match(io.stdout.text, /pending\s+new@example\.com\s+member\s+expires 2026-09-04/);
+  assert.match(io.stdout.text, /expired\s+old@example\.com\s+admin\s+expired 2026-08-01/);
+  assert.match(io.stdout.text, /accepted\s+in@example\.com\s+member\s+accepted 2026-08-30/);
+});
+
+test("members invite says whether the teammate is in yet", async () => {
+  const pending = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async () => jsonResponse({
+      ok: true,
+      invite: { id: "inv_1", email: "new@example.com", role: "member", status: "pending", expires_at: "2026-09-04T00:00:00.000Z", invited_by: null },
+      member: null,
+    }),
+  });
+  assert.equal(await main(["members", "invite", "--email", "new@example.com"], pending), 0);
+  assert.match(pending.stdout.text, /Status: pending/);
+  assert.match(pending.stdout.text, /Invited by: admin API key/);
+  assert.match(pending.stdout.text, /joins when they use the emailed link/);
+
+  const immediate = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async () => jsonResponse({
+      ok: true,
+      invite: { id: "inv_2", email: "known@example.com", role: "admin", status: "accepted", expires_at: "2026-09-04T00:00:00.000Z", accepted_at: null, invited_by: { user_id: "u1", email: "owner@example.com" } },
+      member: { id: "mem_9", email: "known@example.com", role: "admin" },
+    }),
+  });
+  assert.equal(await main(["members", "invite", "--email", "known@example.com", "--role", "admin"], immediate), 0);
+  assert.match(immediate.stdout.text, /Invited by: owner@example\.com/);
+  assert.match(immediate.stdout.text, /Membership granted now: known@example\.com is admin \(member id mem_9\)/);
+});
+
+test("members and invites reject unknown actions and missing ids", async () => {
+  const io = harness({ env: { REWINDREWIND_API_KEY: "rr_admin_secret" } });
+  assert.notEqual(await main(["members", "frobnicate"], io), 0);
+  assert.match(io.stderr.text, /list, invite, role, remove/);
+
+  const missingMember = harness({ env: { REWINDREWIND_API_KEY: "rr_admin_secret" } });
+  assert.notEqual(await main(["members", "role", "--role", "admin"], missingMember), 0);
+  assert.match(missingMember.stderr.text, /members role <member-id>/);
+
+  const missingInvite = harness({ env: { REWINDREWIND_API_KEY: "rr_admin_secret" } });
+  assert.notEqual(await main(["invites", "resend"], missingInvite), 0);
+  assert.match(missingInvite.stderr.text, /invites resend <invitation-id>/);
+
+  const missingEmail = harness({ env: { REWINDREWIND_API_KEY: "rr_admin_secret" } });
+  assert.notEqual(await main(["members", "invite"], missingEmail), 0);
+  assert.match(missingEmail.stderr.text, /--email/);
+});
+
+test("help lists members and invites for agents", async () => {
+  const io = harness();
+  assert.equal(await main(["--help", "--json"], io), 0);
+  const out = JSON.parse(io.stdout.text);
+  assert.ok(out.commands.some((item) => item.command.startsWith("members ")));
+  assert.ok(out.commands.some((item) => item.command.startsWith("invites ")));
+
+  const detail = harness();
+  assert.equal(await main(["help", "invites"], detail), 0);
+  assert.match(detail.stdout.text, /pending, accepted, or expired/);
+});
+
 test("metrics exposes complete CRUD for agents", async () => {
   const seen = [];
   const io = harness({

@@ -149,6 +149,26 @@ them. Both take the same JSON specification shape and both support
 evaluation, which can lag a specification change — `rewindrewind metrics
 evaluate` recomputes every metric against current data.
 
+Invite teammates and track each invite:
+
+```sh
+rewindrewind members list
+rewindrewind members invite --email teammate@example.com --role member
+rewindrewind invites list --status pending
+rewindrewind invites resend INVITATION_ID
+rewindrewind invites revoke INVITATION_ID
+rewindrewind members role MEMBER_ID --role admin
+rewindrewind members remove MEMBER_ID
+```
+
+Roles are `admin` (account settings, billing, API keys, members) or `member`
+(projects and issues). An invited email that already has a RewindRewind user is
+granted the membership immediately; a new email gets it when the emailed link is
+used, which expires 24 hours after the invite is sent. Every invite tracks as
+`pending`, `accepted`, or `expired`, and `members list` prints the member ids
+that `members role` and `members remove` take. The account's last admin cannot be
+demoted or removed.
+
 Track daily visits without storing a durable event for every page load:
 
 ```sh

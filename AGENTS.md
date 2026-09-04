@@ -113,6 +113,8 @@ miss; a miss is a soft warning (`skip`), not a failure.
 rewindrewind help       agent | auth | sdk | events | exceptions | troubleshooting
 rewindrewind sdk        list | show <name> | primitives <name> | doctor [name] | upgrade [name] | snippet <name> | env
 rewindrewind projects   list | create | get | update | delete
+rewindrewind members    list | invite | role | remove
+rewindrewind invites    list | get | resend | revoke
 rewindrewind events     send | batch | list | raw
 rewindrewind exceptions send
 rewindrewind issues     list | get | update | resolve | reopen | ignore | snooze | lifecycle
@@ -126,6 +128,21 @@ rewindrewind api <get|post|patch|delete> <path> [--data <json|@file|->] [--query
 
 Output is human-readable by default. Add `--json` for compact JSON on stdout,
 `--pretty` for readable JSON, or `--quiet` to silence normal output.
+
+## Inviting teammates
+
+Members are `admin` (account settings, billing, API keys, members) or `member`
+(projects and issues):
+
+```sh
+rewindrewind members invite --email teammate@example.com --role member
+rewindrewind invites list --status pending
+```
+
+An invited email that already has a RewindRewind user joins immediately; a new
+one joins when it uses the emailed link, which expires in 24 hours. Each invite
+tracks as `pending`, `accepted`, or `expired`; `invites resend` and
+`invites revoke` act on a pending one.
 
 ## Docs
 
