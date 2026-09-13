@@ -1200,3 +1200,154 @@ test("definition lists identify each rule and metric, not just its id", async ()
   assert.match(io.stdout.text, /where=audience_id=__aggregate__,channel=__all__/);
   assert.match(io.stdout.text, /value=80974/);
 });
+
+test("help directory exposes every first-class feature topic concisely", async () => {
+  const io = harness();
+  assert.equal(await main(["--help", "--json"], io), 0);
+  const out = JSON.parse(io.stdout.text);
+  for (const id of ["visits", "support", "health", "metrics", "noise", "notifications", "members", "sourcemaps"]) {
+    assert.ok(out.topics.some((topic) => topic.id === id), `missing help topic ${id}`);
+  }
+
+  const support = harness();
+  assert.equal(await main(["help", "support"], support), 0);
+  assert.match(support.stdout.text, /support submit/);
+  assert.match(support.stdout.text, /support list/);
+  assert.match(support.stdout.text, /does not deliver/i);
+});
+
+test("verify probes support auth without creating a conversation", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_PROJECT_KEY: "rrpub_public", ...NO_WAIT },
+    fetch: async (url, init) => {
+      const path = new URL(url).pathname;
+      seen.push({ path, body: init.body && JSON.parse(init.body), auth: init.headers.authorization });
+      if (path === "/v1/support") return jsonResponse({ ok: false, error: { code: "bad_request", message: "subject is required" } }, 400);
+      if (path === "/api/health") return jsonResponse({ ok: true });
+      return jsonResponse({ ok: true }, 202);
+    },
+  });
+
+  assert.equal(await main(["verify", "--base-url", "https://rw.test", "--json"], io), 0);
+  const probe = seen.find((request) => request.path === "/v1/support");
+  assert.deepEqual(probe.body, {});
+  assert.equal(probe.auth, "Bearer rrpub_public");
+  const out = JSON.parse(io.stdout.text);
+  assert.equal(out.checks.find((check) => check.check === "support endpoint").ok, true);
+});
+
+test("support exposes intake and the complete management workflow", async () => {
+  const seen = [];
+  const io = harness({
+    env: {
+      REWINDREWIND_PROJECT_KEY: "rrpub_public",
+      REWINDREWIND_API_KEY: "rr_admin_secret",
+      REWINDREWIND_PROJECT_ID: "p1",
+      REWINDREWIND_BASE_URL: "https://rw.test",
+    },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, auth: init.headers.authorization, body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true });
+    },
+  });
+
+  assert.equal(await main(["support", "submit", "--subject", "Help", "--message", "It broke", "--email", "me@example.com", "--identity-id", "u1"], io), 0);
+  assert.equal(await main(["support", "list", "--status", "resolved"], io), 0);
+  assert.equal(await main(["support", "get", "sc1"], io), 0);
+  assert.equal(await main(["support", "reply", "sc1", "--body", "Fixed", "--channel", "email"], io), 0);
+  assert.equal(await main(["support", "note", "sc1", "--body", "Internal"], io), 0);
+  assert.equal(await main(["support", "edit-note", "sc1", "sn1", "--body", "Updated"], io), 0);
+  assert.equal(await main(["support", "status", "sc1", "--status", "resolved"], io), 0);
+  assert.equal(await main(["support", "assign", "sc1", "--user", "u2"], io), 0);
+  assert.equal(await main(["support", "settings"], io), 0);
+  assert.equal(await main(["support", "settings", "update", "--data", '{"notify_new":false}'], io), 0);
+  assert.equal(await main(["support", "erase", "--identity-id", "u1"], io), 0);
+
+  assert.deepEqual(seen.map(({ method, url }) => [method, url]), [
+    ["POST", "https://rw.test/v1/support"],
+    ["GET", "https://rw.test/api/projects/p1/support?status=resolved"],
+    ["GET", "https://rw.test/api/projects/p1/support/sc1"],
+    ["POST", "https://rw.test/api/projects/p1/support/sc1/messages"],
+    ["POST", "https://rw.test/api/projects/p1/support/sc1/notes"],
+    ["PATCH", "https://rw.test/api/projects/p1/support/sc1/notes/sn1"],
+    ["PATCH", "https://rw.test/api/projects/p1/support/sc1"],
+    ["PATCH", "https://rw.test/api/projects/p1/support/sc1"],
+    ["GET", "https://rw.test/api/projects/p1/support/settings"],
+    ["PATCH", "https://rw.test/api/projects/p1/support/settings"],
+    ["POST", "https://rw.test/api/projects/p1/support/erase"],
+  ]);
+  assert.equal(seen[0].auth, "Bearer rrpub_public");
+  assert.deepEqual(seen[0].body, { subject: "Help", message: "It broke", contact: { email: "me@example.com" }, identity_id: "u1" });
+  assert.deepEqual(seen[3].body, { body: "Fixed", channel: "email" });
+  assert.deepEqual(seen[6].body, { status: "resolved" });
+  assert.deepEqual(seen[7].body, { assignee_user_id: "u2" });
+});
+
+test("noise commands cover catalog, safe preview, rules, and match counts", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true });
+    },
+  });
+  const rule = '{"platform":"javascript","exception_type":"TypeError","message":"ResizeObserver loop","reason":"Browser observer noise"}';
+
+  assert.equal(await main(["noise", "catalog"], io), 0);
+  assert.equal(await main(["noise", "catalog-set", "resize-observer", "--enabled", "false"], io), 0);
+  assert.equal(await main(["noise", "list"], io), 0);
+  assert.equal(await main(["noise", "get", "nr1"], io), 0);
+  assert.equal(await main(["noise", "preview", "--data", rule], io), 0);
+  assert.equal(await main(["noise", "create", "--data", rule], io), 0);
+  assert.equal(await main(["noise", "update", "nr1", "--data", rule], io), 0);
+  assert.equal(await main(["noise", "disable", "nr1"], io), 0);
+  assert.equal(await main(["noise", "enable", "nr1"], io), 0);
+  assert.equal(await main(["noise", "matches", "--days", "30"], io), 0);
+
+  assert.deepEqual(seen.map(({ method, url }) => [method, url]), [
+    ["GET", "https://rw.test/api/projects/p1/noise/catalog"],
+    ["POST", "https://rw.test/api/projects/p1/noise/catalog/resize-observer"],
+    ["GET", "https://rw.test/api/projects/p1/noise/rules"],
+    ["GET", "https://rw.test/api/projects/p1/noise/rules/nr1"],
+    ["POST", "https://rw.test/api/projects/p1/noise/rules/preview"],
+    ["POST", "https://rw.test/api/projects/p1/noise/rules"],
+    ["PATCH", "https://rw.test/api/projects/p1/noise/rules/nr1"],
+    ["DELETE", "https://rw.test/api/projects/p1/noise/rules/nr1"],
+    ["POST", "https://rw.test/api/projects/p1/noise/rules/nr1/enable"],
+    ["GET", "https://rw.test/api/projects/p1/noise/matches?days=30"],
+  ]);
+  assert.deepEqual(seen[1].body, { enabled: false });
+});
+
+test("notifications, project health, event types, and usage have discoverable commands", async () => {
+  const seen = [];
+  const io = harness({
+    env: { REWINDREWIND_API_KEY: "rr_admin_secret", REWINDREWIND_PROJECT_ID: "p1", REWINDREWIND_BASE_URL: "https://rw.test" },
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), method: init.method, body: init.body && JSON.parse(init.body) });
+      return jsonResponse({ ok: true });
+    },
+  });
+
+  assert.equal(await main(["notifications", "get"], io), 0);
+  assert.equal(await main(["notifications", "update", "--new-issue-email", "false", "--repeat-threshold", "50", "--repeat-window-minutes", "120"], io), 0);
+  assert.equal(await main(["notifications", "environment", "development", "--enabled", "false"], io), 0);
+  assert.equal(await main(["project-health", "get", "--history-limit", "10", "--history-cursor", "next"], io), 0);
+  assert.equal(await main(["project-health", "evaluate"], io), 0);
+  assert.equal(await main(["event-types", "list", "--query", "checkout", "--limit", "5"], io), 0);
+  assert.equal(await main(["usage", "get", "--account", "acct1"], io), 0);
+
+  assert.deepEqual(seen.map(({ method, url }) => [method, url]), [
+    ["GET", "https://rw.test/api/projects/p1/notifications"],
+    ["PATCH", "https://rw.test/api/projects/p1/notifications"],
+    ["PATCH", "https://rw.test/api/projects/p1/notifications/environments"],
+    ["GET", "https://rw.test/api/projects/p1/health?history_limit=10&history_cursor=next"],
+    ["POST", "https://rw.test/api/projects/p1/health/evaluate"],
+    ["GET", "https://rw.test/api/projects/p1/event-types?q=checkout&limit=5"],
+    ["GET", "https://rw.test/api/usage?account=acct1"],
+  ]);
+  assert.deepEqual(seen[1].body, { new_issue_email_enabled: false, repeat_issue_threshold: 50, repeat_issue_window_minutes: 120 });
+  assert.deepEqual(seen[2].body, { environment: "development", enabled: false });
+});

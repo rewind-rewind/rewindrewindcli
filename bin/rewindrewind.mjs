@@ -70,7 +70,7 @@ const COMMAND_DIRECTORY = [
   { command: "status", summary: "Check admin auth; agents should run this first." },
   { command: "init", summary: "Configure auth, choose a project, fetch the public project key, print setup snippets." },
   { command: "verify", summary: "Send test event and exception data and confirm the setup works." },
-  { command: "help [topic]", summary: "Show task help. Topics: agent, auth, sdk, events, exceptions, troubleshooting." },
+  { command: "help [topic]", summary: "Show concise task help; run it without a topic for the directory." },
   { command: "sdk list|show|snippet|env|primitives|doctor|upgrade", summary: "Machine-readable SDK setup pointers, agent hints, doctor checks, and upgrade plans." },
   { command: "configure | config get|set|unset", summary: "Read and write CLI config." },
   { command: "projects list|create|get|update|delete", summary: "Manage projects with an admin key. `delete` disables a project; it stays listed, marked disabled." },
@@ -78,12 +78,18 @@ const COMMAND_DIRECTORY = [
   { command: "invites list|get|resend|revoke", summary: "Track invites as pending, accepted, or expired; resend or revoke one." },
   { command: "health-rules list|get|create|update|delete", summary: "Configure project health rules from JSON files or stdin." },
   { command: "metrics list|get|create|update|delete|evaluate", summary: "Configure project dashboard metrics from JSON files or stdin." },
+  { command: "project-health get|evaluate", summary: "Read project health and evaluation history, or evaluate rules now." },
+  { command: "event-types list", summary: "Discover retained event names for rules and integrations." },
+  { command: "noise catalog|catalog-set|list|get|preview|create|update|disable|enable|matches", summary: "Inspect and manage known-noise filters." },
+  { command: "notifications get|update|environment", summary: "Configure project issue-email defaults, cadence, and environment overrides." },
+  { command: "support submit|list|get|reply|note|edit-note|status|assign|settings|erase", summary: "Submit requests and operate the support inbox." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
   { command: "visits send|list", summary: "Send a daily visit/DAU signal, or read the per-day visit series." },
   { command: "exceptions send", summary: "Send an exception payload with the public project key." },
   { command: "issues list|get|update|resolve|reopen|ignore|snooze|lifecycle", summary: "Inspect and manage exception issues." },
   { command: "comments list|create|update|delete", summary: "Work with issue comments." },
   { command: "sourcemaps upload", summary: "Upload JavaScript source maps for a release." },
+  { command: "usage get", summary: "Read account signal usage and projected cost." },
   { command: "api <method> <path>", summary: "Generic API escape hatch; /v1/* uses project key, /api/* uses admin key." },
   { command: "health | openapi | export | ingestion-health | retention run", summary: "Service and operations commands." },
 ];
@@ -580,6 +586,115 @@ const HELP_TOPICS = {
     ],
     see_also: ["help sdk browser", "help sdk node", `${DOCS_URL}#exceptions`],
   },
+  visits: {
+    id: "visits",
+    title: "Visits",
+    summary: "Visits are lightweight daily traffic counts, not durable events.",
+    commands: [
+      "rewindrewind visits send --environment production --visitor-id user-42",
+      "rewindrewind visits list --from 2026-09-01 --to 2026-09-13 --environment production",
+    ],
+    see_also: ["help events", "help health"],
+  },
+  support: {
+    id: "support",
+    title: "Support Inbox",
+    summary: "Submit customer requests with a project key; operate the inbox with an admin key.",
+    details: [
+      "`support reply` records a response sent through another channel; RewindRewind does not deliver it.",
+      "Status is open, resolved, or spam. Assignment takes a user_id from `members list --json`.",
+      "Use `support settings update --data @settings.json`; use `support erase` for requester-data deletion.",
+    ],
+    commands: [
+      "rewindrewind support submit --subject <text> --message <text> [--email <email>]",
+      "rewindrewind support list --status active",
+      "rewindrewind support get <conversation-id>",
+      "rewindrewind support reply <conversation-id> --body <text> --channel email",
+      "rewindrewind support note <conversation-id> --body <text>",
+      "rewindrewind support status <conversation-id> --status resolved",
+      "rewindrewind support assign <conversation-id> --user <user-id|none>",
+      "rewindrewind support settings",
+      "rewindrewind support settings update --data @settings.json",
+      "rewindrewind support erase --identity-id <id>",
+    ],
+    see_also: ["help members", `${DEFAULT_BASE_URL}/auto-support`, `${DEFAULT_BASE_URL}/docs#support`],
+  },
+  health: {
+    id: "health",
+    title: "Project Health",
+    summary: "Health rules turn retained signals into a current project status.",
+    commands: [
+      "rewindrewind project-health get --history-limit 20",
+      "rewindrewind project-health evaluate",
+      "rewindrewind health-rules list",
+      "rewindrewind health-rules create --data @rule.json",
+      "rewindrewind event-types list --query checkout",
+    ],
+    see_also: ["help metrics", "help events", "openapi"],
+  },
+  metrics: {
+    id: "metrics",
+    title: "Metrics",
+    summary: "Metrics evaluate a value and trend without changing project health.",
+    commands: [
+      "rewindrewind metrics list",
+      "rewindrewind metrics create --data @metric.json",
+      "rewindrewind metrics update <metric-id> --data -",
+      "rewindrewind metrics evaluate",
+    ],
+    see_also: ["help health", "help events"],
+  },
+  noise: {
+    id: "noise",
+    title: "Noise Rules",
+    summary: "Preview and manage rules that drop known third-party exceptions before storage.",
+    details: [
+      "Preview a custom rule before creating it. Disabling a rule is forward-only; stored history is preserved.",
+      "Catalog entries are curated defaults. `noise catalog-set` changes one entry for one project.",
+    ],
+    commands: [
+      "rewindrewind noise catalog",
+      "rewindrewind noise catalog-set <entry-id> --enabled false",
+      "rewindrewind noise preview --data @rule.json",
+      "rewindrewind noise create --data @rule.json",
+      "rewindrewind noise list | noise get <rule-id>",
+      "rewindrewind noise disable <rule-id> | noise enable <rule-id>",
+      "rewindrewind noise matches --days 30",
+    ],
+    see_also: ["help exceptions", "openapi"],
+  },
+  notifications: {
+    id: "notifications",
+    title: "Notifications",
+    summary: "Configure project-wide issue-email defaults, repeat cadence, and environment overrides.",
+    commands: [
+      "rewindrewind notifications get",
+      "rewindrewind notifications update --new-issue-email true --repeat-threshold 25 --repeat-window-minutes 60",
+      "rewindrewind notifications environment development --enabled false",
+    ],
+    see_also: ["help exceptions", "help members"],
+  },
+  members: {
+    id: "members",
+    title: "Members And Invites",
+    summary: "Manage account members and invitation lifecycle with an admin key.",
+    commands: [
+      "rewindrewind members list",
+      "rewindrewind members invite --email teammate@example.com --role member",
+      "rewindrewind members role <member-id> --role admin",
+      "rewindrewind invites list --status pending",
+    ],
+    see_also: ["help auth", "help support"],
+  },
+  sourcemaps: {
+    id: "sourcemaps",
+    title: "Source Maps",
+    summary: "Upload a JavaScript source map with the same release used by captured exceptions.",
+    commands: [
+      "rewindrewind sourcemaps upload --release web@1.4.3 --file dist/app.js.map",
+    ],
+    see_also: ["help exceptions", "help sdk browser"],
+  },
   troubleshooting: {
     id: "troubleshooting",
     title: "Troubleshooting",
@@ -712,6 +827,18 @@ async function dispatch(ctx) {
       return healthRules(ctx, action);
     case "metrics":
       return metrics(ctx, action);
+    case "project-health":
+      return projectHealth(ctx, action);
+    case "event-types":
+      return eventTypes(ctx, action);
+    case "noise":
+      return noise(ctx, action);
+    case "notifications":
+      return notifications(ctx, action);
+    case "support":
+      return support(ctx, action);
+    case "usage":
+      return usageCommand(ctx, action);
     case "events":
       return events(ctx, action);
     case "visits":
@@ -1246,6 +1373,12 @@ function commandHelp(name) {
     },
     "health-rules": { usage: ["rewindrewind health-rules list", "rewindrewind health-rules get <rule-id>", "rewindrewind health-rules create --data @rule.json", "rewindrewind health-rules update <rule-id> --data -", "rewindrewind health-rules delete <rule-id>"], see_also: ["metrics", "openapi"] },
     metrics: { usage: ["rewindrewind metrics list", "rewindrewind metrics get <metric-id>", "rewindrewind metrics create --data @metric.json", "rewindrewind metrics update <metric-id> --data -", "rewindrewind metrics delete <metric-id>", "rewindrewind metrics evaluate"], see_also: ["health-rules", "openapi"] },
+    "project-health": { usage: HELP_TOPICS.health.commands, see_also: ["help health", "health-rules", "metrics"] },
+    "event-types": { usage: ["rewindrewind event-types list --query checkout --limit 12"], see_also: ["help health", "help metrics"] },
+    noise: { usage: HELP_TOPICS.noise.commands, details: HELP_TOPICS.noise.details, see_also: HELP_TOPICS.noise.see_also },
+    notifications: { usage: HELP_TOPICS.notifications.commands, see_also: HELP_TOPICS.notifications.see_also },
+    support: { usage: HELP_TOPICS.support.commands, details: HELP_TOPICS.support.details, see_also: HELP_TOPICS.support.see_also },
+    usage: { usage: ["rewindrewind usage get", "rewindrewind usage get --account <account-id>"], see_also: ["projects list"] },
     api: { usage: ["rewindrewind api get /api/projects", "rewindrewind api post /v1/events --data @event.json", "rewindrewind api get /openapi.json --no-auth"], see_also: ["openapi"] },
   };
   return map[name];
@@ -1431,8 +1564,10 @@ async function resolveVerifyProjectId(ctx) {
   return projects.find((project) => project?.public_key === projectKey)?.id;
 }
 
-// `verify` exercises each surface end to end: health, an app event, an
-// exception, then confirms the event was stored via the management API.
+// `verify` exercises each ingestion route and confirms the event was stored.
+// Support gets an intentionally incomplete payload: its expected validation
+// response proves the route and project-key auth work without creating an inbox
+// record or triggering a new-request email.
 async function verifyCommand(ctx) {
   const environment = stringOption(ctx.options, "environment") ?? "development";
   const marker = `cli-verify-${shortToken()}`;
@@ -1460,6 +1595,17 @@ async function verifyCommand(ctx) {
     },
   }));
   checks.push({ check: "exception send", surface: "exceptions", ...outcome(exception, (d) => d?.ok === true) });
+
+  const supportProbe = await safe(() => request(ctx, "POST", "/v1/support", {
+    keyKind: "project",
+    body: {},
+    acceptedStatuses: [400],
+  }));
+  checks.push({
+    check: "support endpoint",
+    surface: "support",
+    ...outcome(supportProbe, (d) => d?.ok === true || d?.error?.code === "bad_request"),
+  });
 
   // Confirm the event landed (best-effort — needs an admin key, so a miss here is
   // a soft warning, not a hard failure). Ingestion is async, so poll with backoff
@@ -1724,6 +1870,174 @@ async function metrics(ctx, action) {
   throw usage("Expected a metrics action: list, get, create, update, delete, evaluate.");
 }
 
+async function projectHealth(ctx, action) {
+  const base = `/api/projects/${encodeURIComponent(projectId(ctx))}/health`;
+  if (!action || action === "get" || action === "status") {
+    assertKnownOptions(ctx, "project-health get", ["history-limit", "history-cursor"]);
+    return request(ctx, "GET", base, { query: queryFromOptions(ctx.options, ["history-limit", "history-cursor"]) });
+  }
+  if (action === "evaluate") return request(ctx, "POST", `${base}/evaluate`);
+  throw usage("Expected a project-health action: get, evaluate.");
+}
+
+async function eventTypes(ctx, action) {
+  if (!action || action === "list") {
+    assertKnownOptions(ctx, "event-types list", ["query", "q", "limit"]);
+    const query = compact({
+      q: ctx.options.q === undefined ? last(ctx.options.query) : last(ctx.options.q),
+      limit: ctx.options.limit === undefined ? undefined : last(ctx.options.limit),
+    });
+    return request(ctx, "GET", `/api/projects/${encodeURIComponent(projectId(ctx))}/event-types`, { query });
+  }
+  throw usage("Expected `event-types list`.");
+}
+
+async function noise(ctx, action) {
+  const id = ctx.command[2];
+  const project = encodeURIComponent(projectId(ctx));
+  const base = `/api/projects/${project}/noise`;
+  const rules = `${base}/rules`;
+  if (action === "catalog") return request(ctx, "GET", `${base}/catalog`);
+  if (action === "catalog-set") {
+    if (!id) throw usage("Expected `noise catalog-set <entry-id> --enabled <true|false>`.");
+    return request(ctx, "POST", `${base}/catalog/${encodeURIComponent(id)}`, {
+      body: { enabled: parseBoolean(requiredOption(ctx.options, "enabled")) },
+    });
+  }
+  if (!action || action === "list" || action === "rules") return request(ctx, "GET", rules);
+  if (action === "get") {
+    if (!id) throw usage("Expected `noise get <rule-id>`.");
+    return request(ctx, "GET", `${rules}/${encodeURIComponent(id)}`);
+  }
+  if (action === "preview" || action === "create") {
+    const body = await jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+    return request(ctx, "POST", action === "preview" ? `${rules}/preview` : rules, { body });
+  }
+  if (action === "update") {
+    if (!id) throw usage("Expected `noise update <rule-id> --data <json|@file|->`.");
+    const body = await jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+    return request(ctx, "PATCH", `${rules}/${encodeURIComponent(id)}`, { body });
+  }
+  if (action === "disable") {
+    if (!id) throw usage("Expected `noise disable <rule-id>`.");
+    return request(ctx, "DELETE", `${rules}/${encodeURIComponent(id)}`);
+  }
+  if (action === "enable") {
+    if (!id) throw usage("Expected `noise enable <rule-id>`.");
+    return request(ctx, "POST", `${rules}/${encodeURIComponent(id)}/enable`);
+  }
+  if (action === "matches") {
+    assertKnownOptions(ctx, "noise matches", ["days"]);
+    return request(ctx, "GET", `${base}/matches`, { query: queryFromOptions(ctx.options, ["days"]) });
+  }
+  throw usage("Expected a noise action: catalog, catalog-set, list, get, preview, create, update, disable, enable, matches.");
+}
+
+async function notifications(ctx, action) {
+  const base = `/api/projects/${encodeURIComponent(projectId(ctx))}/notifications`;
+  if (!action || action === "get") return request(ctx, "GET", base);
+  if (action === "update") {
+    const body = bodyFromOptions(ctx.options, [
+      ["new-issue-email", "new_issue_email_enabled", "boolean"],
+      ["repeat-threshold", "repeat_issue_threshold", "number"],
+      ["repeat-window-minutes", "repeat_issue_window_minutes", "number"],
+    ]);
+    if (Object.keys(body).length === 0) throw usage("Set at least one notification option. Run `rewindrewind help notifications`.");
+    return request(ctx, "PATCH", base, { body });
+  }
+  if (action === "environment") {
+    const environment = ctx.command[2];
+    if (!environment) throw usage("Expected `notifications environment <name> --enabled <true|false>`.");
+    return request(ctx, "PATCH", `${base}/environments`, {
+      body: { environment, enabled: parseBoolean(requiredOption(ctx.options, "enabled")) },
+    });
+  }
+  throw usage("Expected a notifications action: get, update, environment.");
+}
+
+async function support(ctx, action) {
+  const conversationId = ctx.command[2];
+  if (action === "submit" || action === "send") {
+    let body;
+    if (ctx.options.data !== undefined) {
+      body = await jsonInput(ctx.options.data, ctx.streams.stdin);
+    } else {
+      const contact = compact({
+        name: stringOption(ctx.options, "name"),
+        email: stringOption(ctx.options, "email"),
+        phone: stringOption(ctx.options, "phone"),
+      });
+      body = compact({
+        subject: requiredOption(ctx.options, "subject"),
+        message: requiredOption(ctx.options, "message"),
+        contact: Object.keys(contact).length > 0 ? contact : undefined,
+        identity_id: stringOption(ctx.options, "identity-id"),
+        anonymous_id: stringOption(ctx.options, "anonymous-id"),
+        traits: ctx.options.traits === undefined ? undefined : await jsonInput(ctx.options.traits, ctx.streams.stdin),
+        context: ctx.options.context === undefined ? undefined : await jsonInput(ctx.options.context, ctx.streams.stdin),
+        custom_fields: ctx.options["custom-fields"] === undefined ? undefined : await jsonInput(ctx.options["custom-fields"], ctx.streams.stdin),
+      });
+    }
+    return request(ctx, "POST", "/v1/support", { keyKind: "project", body });
+  }
+  const project = encodeURIComponent(projectId(ctx));
+  const base = `/api/projects/${project}/support`;
+  if (!action || action === "list") {
+    assertKnownOptions(ctx, "support list", ["status"]);
+    return request(ctx, "GET", base, { query: queryFromOptions(ctx.options, ["status"]) });
+  }
+  if (action === "settings" && (conversationId === undefined || conversationId === "get")) return request(ctx, "GET", `${base}/settings`);
+  if ((action === "settings" && conversationId === "update") || action === "settings-update") {
+    const body = await jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+    return request(ctx, "PATCH", `${base}/settings`, { body });
+  }
+  if (action === "erase") {
+    const body = compact({
+      identity_id: stringOption(ctx.options, "identity-id"),
+      anonymous_id: stringOption(ctx.options, "anonymous-id"),
+      email: stringOption(ctx.options, "email"),
+    });
+    if (Object.keys(body).length === 0) throw usage("Expected one of --identity-id, --anonymous-id, or --email.");
+    return request(ctx, "POST", `${base}/erase`, { body });
+  }
+  if (!conversationId) throw usage(`Expected \`support ${action} <conversation-id>\`.`);
+  const conversation = `${base}/${encodeURIComponent(conversationId)}`;
+  if (action === "get") return request(ctx, "GET", conversation);
+  if (action === "reply") {
+    return request(ctx, "POST", `${conversation}/messages`, {
+      body: compact({
+        body: requiredOption(ctx.options, "body"),
+        channel: requiredOption(ctx.options, "channel"),
+        occurred_at: stringOption(ctx.options, "occurred-at"),
+      }),
+    });
+  }
+  if (action === "note") return request(ctx, "POST", `${conversation}/notes`, { body: { body: requiredOption(ctx.options, "body") } });
+  if (action === "edit-note") {
+    const noteId = ctx.command[3];
+    if (!noteId) throw usage("Expected `support edit-note <conversation-id> <note-id> --body <text>`.");
+    return request(ctx, "PATCH", `${conversation}/notes/${encodeURIComponent(noteId)}`, { body: { body: requiredOption(ctx.options, "body") } });
+  }
+  if (action === "status") return request(ctx, "PATCH", conversation, { body: { status: requiredOption(ctx.options, "status") } });
+  if (action === "assign") {
+    const user = requiredOption(ctx.options, "user");
+    return request(ctx, "PATCH", conversation, { body: { assignee_user_id: user === "none" || user === "null" ? null : user } });
+  }
+  if (action === "update") {
+    const body = await jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+    return request(ctx, "PATCH", conversation, { body });
+  }
+  throw usage("Expected a support action: submit, list, get, reply, note, edit-note, status, assign, update, settings, erase.");
+}
+
+async function usageCommand(ctx, action) {
+  if (!action || action === "get") {
+    assertKnownOptions(ctx, "usage get", ["account"]);
+    return request(ctx, "GET", "/api/usage", { query: queryFromOptions(ctx.options, ["account"]) });
+  }
+  throw usage("Expected `usage get`.");
+}
+
 async function events(ctx, action) {
   if (action === "send") {
     const payload = ctx.options.payload === undefined ? {} : await jsonInput(ctx.options.payload, ctx.streams.stdin);
@@ -1938,7 +2252,7 @@ async function request(ctx, method, path, options = {}) {
   const contentType = res.headers.get("content-type") ?? "";
   const text = await res.text();
   const data = text && contentType.includes("application/json") ? parseJson(text, `Response from ${url}`) : text;
-  if (!res.ok) {
+  if (!res.ok && !(options.acceptedStatuses ?? []).includes(res.status)) {
     const message = data && typeof data === "object" && data.error?.message ? data.error.message : `${res.status} ${res.statusText}`;
     const error = new CliError(`RewindRewind API error: ${message}`, res.status >= 400 && res.status < 500 ? 2 : 1);
     error.response = data;

@@ -39,7 +39,8 @@ npx github:rewind-rewind/rewindrewindcli status
 2. Back-end exceptions from servers, jobs, and command-line programs.
 3. App events such as signups, purchases, and feature usage.
 
-Run `rewindrewind verify` after setup. It sends a test event and exception, then confirms that RewindRewind received them.
+Run `rewindrewind verify` after setup. It sends a test event and exception,
+confirms the event, and validates the support route without creating a request.
 
 ## Authentication
 
@@ -135,6 +136,8 @@ Manage projects and project health:
 rewindrewind projects list
 rewindrewind projects create --name "New App"
 rewindrewind projects update --retention-days 90
+rewindrewind project-health get --history-limit 20
+rewindrewind project-health evaluate
 rewindrewind health-rules list
 rewindrewind health-rules create --data @health-rule.json
 rewindrewind metrics list
@@ -148,6 +151,39 @@ them. Both take the same JSON specification shape and both support
 `--data @file.json` and `--data -`. `list` returns each definition's stored
 evaluation, which can lag a specification change — `rewindrewind metrics
 evaluate` recomputes every metric against current data.
+
+Operate customer support:
+
+```sh
+rewindrewind support submit --subject "Login help" --message "Reset failed" --email player@example.com
+rewindrewind support list --status active
+rewindrewind support get CONVERSATION_ID
+rewindrewind support reply CONVERSATION_ID --body "Reset sent" --channel email
+rewindrewind support note CONVERSATION_ID --body "VIP account"
+rewindrewind support status CONVERSATION_ID --status resolved
+```
+
+`support reply` records a response sent through the named channel. It does not
+send the response. Use `rewindrewind help support` for assignment, form settings,
+note editing, and requester-data erasure.
+
+Preview and manage exception noise rules:
+
+```sh
+rewindrewind noise catalog
+rewindrewind noise preview --data @noise-rule.json
+rewindrewind noise create --data @noise-rule.json
+rewindrewind noise matches --days 30
+```
+
+Configure project-wide issue notifications and discover retained event names:
+
+```sh
+rewindrewind notifications get
+rewindrewind notifications environment development --enabled false
+rewindrewind event-types list --query checkout
+rewindrewind usage get
+```
 
 Invite teammates and track each invite:
 
@@ -207,6 +243,11 @@ rewindrewind --help --json
 rewindrewind help auth
 rewindrewind help events
 rewindrewind help exceptions
+rewindrewind help support
+rewindrewind help health
+rewindrewind help metrics
+rewindrewind help noise
+rewindrewind help notifications
 rewindrewind help troubleshooting
 ```
 

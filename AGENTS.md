@@ -76,7 +76,8 @@ rewindrewind sdk upgrade --pretty
 rewindrewind verify --json
 ```
 
-This sends a test event and exception and confirms they landed. Expect `ok: true`.
+This sends a test event and exception, confirms the event, and validates support
+routing/auth without creating an inbox request. Expect `ok: true`.
 
 The `event confirmed in project` check reads the event back through the management
 API. It needs an admin key, and a project id — taken from `--project`,
@@ -110,11 +111,20 @@ miss; a miss is a soft warning (`skip`), not a failure.
 ## Primitives — you can do EVERYTHING from the CLI
 
 ```sh
-rewindrewind help       agent | auth | sdk | events | exceptions | troubleshooting
+rewindrewind help       agent | auth | sdk | events | exceptions | visits | support | health | metrics | noise | notifications | members | sourcemaps | troubleshooting
 rewindrewind sdk        list | show <name> | primitives <name> | doctor [name] | upgrade [name] | snippet <name> | env
 rewindrewind projects   list | create | get | update | delete
 rewindrewind members    list | invite | role | remove
 rewindrewind invites    list | get | resend | revoke
+rewindrewind support    submit | list | get | reply | note | edit-note | status | assign | settings [update] | erase
+rewindrewind noise      catalog | catalog-set | list | get | preview | create | update | disable | enable | matches
+rewindrewind notifications get | update | environment
+rewindrewind project-health get | evaluate
+rewindrewind health-rules list | get | create | update | delete
+rewindrewind metrics    list | get | create | update | delete | evaluate
+rewindrewind event-types list
+rewindrewind visits     send | list
+rewindrewind usage      get
 rewindrewind events     send | batch | list | raw
 rewindrewind exceptions send
 rewindrewind issues     list | get | update | resolve | reopen | ignore | snooze | lifecycle
