@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 const manifest = JSON.parse(await readFile(resolve(root, "release-manifest.json"), "utf8"));
 const tagIndex = process.argv.indexOf("--tag");
-const rawTag = tagIndex >= 0 ? process.argv[tagIndex + 1] : process.env.GITHUB_REF_NAME;
+const rawTag = tagIndex >= 0 ? process.argv[tagIndex + 1] : process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined;
 const tag = rawTag?.replace(/^v/, "");
 const errors = [];
 
