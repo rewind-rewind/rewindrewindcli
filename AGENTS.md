@@ -10,19 +10,19 @@ in this project, using its CLI. Do it in this exact order.
 
 ## Step 0 — Get the CLI
 
-No install needed — run the public npm package:
+No install needed — run it from the public GitHub repository:
 
 ```sh
-npx @rewindrewind/cli <command>
+npx github:rewind-rewind/rewindrewindcli <command>
 ```
 
 Optionally install it for a persistent `rewindrewind` (and `rr`) command:
 
 ```sh
-npm install -g @rewindrewind/cli
+npm install -g github:rewind-rewind/rewindrewindcli
 ```
 
-In the steps below, `rewindrewind <command>` means `npx @rewindrewind/cli <command>`
+In the steps below, `rewindrewind <command>` means `npx github:rewind-rewind/rewindrewindcli <command>`
 (or the installed `rewindrewind` command).
 
 ## Step 1 — Verify we have an API key (do this FIRST)

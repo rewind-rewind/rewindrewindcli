@@ -1,5 +1,5 @@
 {
-  "name": "@rewindrewind/cli",
+  "name": "rewindrewindcli",
   "version": "0.4.0",
   "description": "RewindRewind CLI — set up front-end exceptions, back-end exceptions, and app events, and drive the whole API.",
   "type": "module",
@@ -40,10 +40,6 @@
     "url": "https://github.com/rewind-rewind/rewindrewindcli/issues"
   },
   "homepage": "https://github.com/rewind-rewind/rewindrewindcli#readme",
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
   "engines": {
     "node": ">=18.18"
   }

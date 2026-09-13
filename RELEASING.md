@@ -14,24 +14,15 @@ For each release:
 4. Merge the release commit to `main`.
 5. Create and push the matching annotated tag: `vX.Y.Z`.
 
-The `Release` workflow checks that the tag, package, and manifest match. For
-normal releases, it publishes the public `@rewindrewind/cli` npm package with
-OIDC provenance, stamps the manifest with the publish time, and creates a GitHub
-release containing the manifest. Re-running the workflow is safe when the npm
-version or GitHub release already exists.
+The `Release` workflow checks that the tag, repository, and manifest match. It
+stamps the manifest with the release time and creates a GitHub release that
+contains the manifest. Re-running the workflow replaces the manifest asset on
+an existing release.
 
-The first package version is the one exception: publish it with an authenticated
-owner because npm trusted publishing can only be configured after the package
-exists. From a clean release commit, run
-`npm publish --access public --provenance=false` once. After that bootstrap
-publish, configure this trusted publisher on npm:
+The CLI is not published to the npm registry. npm is only the installer for the
+tagged GitHub source. The updater derives and installs this exact source from the
+validated repository and semantic version:
 
-- Provider: GitHub Actions
-- Organization: `rewind-rewind`
-- Repository: `rewindrewindcli`
-- Workflow: `release.yml`
-- Allowed action: `npm publish`
-
-Do not add a long-lived npm token to GitHub. The workflow uses a GitHub-hosted
-runner, Node 24, npm 11, and `id-token: write` as required by npm trusted
-publishing.
+```sh
+npm install --global github:rewind-rewind/rewindrewindcli#vX.Y.Z
+```

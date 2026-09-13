@@ -8,10 +8,10 @@ It is designed for people, coding agents, and scripts. Output is readable by def
 
 Node.js 18.18 or newer is required.
 
-Install the public npm package:
+Install from the public GitHub repository:
 
 ```sh
-npm install -g @rewindrewind/cli
+npm install -g github:rewind-rewind/rewindrewindcli
 ```
 
 Create an admin API key in [RewindRewind](https://rewindrewind.com), then initialize and verify your project:
@@ -27,7 +27,7 @@ You can use `rr` as a shorter alias for `rewindrewind`.
 To run the CLI without installing it:
 
 ```sh
-npx @rewindrewind/cli status
+npx github:rewind-rewind/rewindrewindcli status
 ```
 
 ## CLI updates
@@ -43,7 +43,7 @@ rewindrewind update --check --json
 rewindrewind update --yes
 ```
 
-`update --yes` installs the exact semantic version named by the manifest. Run
+`update --yes` installs the exact GitHub tag named by the manifest. Run
 `rewindrewind doctor` to check the runtime, configuration, service, release
 manifest, and installed version. `rewindrewind doctor --fix` repairs safe local
 permission and URL problems and installs an available CLI update.

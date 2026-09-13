@@ -11,6 +11,7 @@ const DEFAULT_BASE_URL = "https://rewindrewind.com";
 const PACKAGE = createRequire(import.meta.url)("../package.json");
 const VERSION = PACKAGE.version;
 const PACKAGE_NAME = PACKAGE.name;
+const RELEASE_REPOSITORY = "rewind-rewind/rewindrewindcli";
 const RELEASE_MANIFEST_URL = `${DEFAULT_BASE_URL}/cli/releases.json`;
 const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -1368,7 +1369,7 @@ function commandHelp(name) {
     update: {
       usage: ["rewindrewind update --check", "rewindrewind update --yes", "rewindrewind update --check --json"],
       details: [
-        `Reads the public release metadata at ${RELEASE_MANIFEST_URL} and installs ${PACKAGE_NAME} through npm.`,
+        `Reads the public release metadata at ${RELEASE_MANIFEST_URL} and installs the exact GitHub release tag through npm.`,
         "Automatic notices use a 24-hour cache and never alter JSON output from ordinary commands.",
       ],
       see_also: ["doctor", "--version"],
@@ -1514,34 +1515,23 @@ function validateReleaseManifest(value, manifestUrl = RELEASE_MANIFEST_URL) {
   if (!value || typeof value !== "object" || value.schema_version !== 1) {
     throw new CliError(`Invalid release manifest from ${manifestUrl}: expected schema_version 1.`, 1);
   }
-  if (value.package !== PACKAGE_NAME) {
-    throw new CliError(`Invalid release manifest from ${manifestUrl}: expected package ${PACKAGE_NAME}.`, 1);
+  if (value.source !== "github") {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: expected GitHub as the release source.`, 1);
+  }
+  if (value.repository !== RELEASE_REPOSITORY) {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: expected repository ${RELEASE_REPOSITORY}.`, 1);
   }
   const latest = value.latest;
   if (!latest || typeof latest !== "object" || !parseSemver(latest.version)) {
     throw new CliError(`Invalid release manifest from ${manifestUrl}: latest.version must be semantic versioning.`, 1);
   }
-  const registry = latest.registry ?? "https://registry.npmjs.org";
-  let registryUrl;
-  try {
-    registryUrl = new URL(registry);
-  } catch {
-    throw new CliError(`Invalid release manifest from ${manifestUrl}: latest.registry is not a URL.`, 1);
-  }
-  const localRegistry = ["localhost", "127.0.0.1", "::1"].includes(registryUrl.hostname);
-  if (registryUrl.protocol !== "https:" && !(registryUrl.protocol === "http:" && localRegistry)) {
-    throw new CliError(`Invalid release manifest from ${manifestUrl}: latest.registry must use HTTPS.`, 1);
-  }
-  if (!localRegistry && registryUrl.origin !== "https://registry.npmjs.org") {
-    throw new CliError(`Invalid release manifest from ${manifestUrl}: releases must come from registry.npmjs.org.`, 1);
-  }
   return {
     schema_version: 1,
-    package: PACKAGE_NAME,
+    source: "github",
+    repository: RELEASE_REPOSITORY,
     channel: value.channel ?? "stable",
     latest: {
       version: latest.version.replace(/^v/, ""),
-      registry: registryUrl.toString().replace(/\/$/, ""),
       published_at: latest.published_at,
       release_url: latest.release_url,
     },
@@ -1585,8 +1575,9 @@ function releaseInfo(manifest, checkedAt, source) {
     current_version: VERSION,
     latest_version: latestVersion,
     update_available: compareSemver(VERSION, latestVersion) < 0,
-    package: manifest.package,
-    registry: manifest.latest.registry,
+    release_source: manifest.source,
+    repository: manifest.repository,
+    npm_spec: `github:${RELEASE_REPOSITORY}#v${latestVersion}`,
     release_url: manifest.latest.release_url,
     checked_at: checkedAt,
     source,
@@ -1646,7 +1637,7 @@ async function updateCommand(ctx) {
   if (ctx.command.length > 1) throw usage("`update` does not take a positional argument. Use --check or --yes.");
   if (checkOnly && yes) throw usage("Use either `update --check` or `update --yes`, not both.");
   const info = await refreshUpdateInfo(ctx);
-  const result = { ok: true, ...info, command: `npm install --global ${info.package}@${info.latest_version}` };
+  const result = { ok: true, ...info, command: `npm install --global ${info.npm_spec}` };
   if (!info.update_available) return { ...result, updated: false, message: `RewindRewind CLI ${VERSION} is current.` };
   if (!yes) {
     return {
@@ -1661,7 +1652,7 @@ async function updateCommand(ctx) {
 
 async function installRelease(ctx, info) {
   const npm = env("REWINDREWIND_NPM", ctx.io) ?? (process.platform === "win32" ? "npm.cmd" : "npm");
-  const args = ["install", "--global", "--no-audit", "--no-fund", `--registry=${info.registry}`, `${info.package}@${info.latest_version}`];
+  const args = ["install", "--global", "--no-audit", "--no-fund", info.npm_spec];
   if (typeof ctx.io.runCommand === "function") {
     const result = await ctx.io.runCommand(npm, args);
     if (result?.code && result.code !== 0) throw new CliError(`npm exited with status ${result.code}.`, 1);

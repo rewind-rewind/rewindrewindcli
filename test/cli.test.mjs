@@ -985,11 +985,11 @@ function harness(overrides = {}) {
 function releaseManifest(version = "0.4.0") {
   return {
     schema_version: 1,
-    package: "@rewindrewind/cli",
+    source: "github",
+    repository: "rewind-rewind/rewindrewindcli",
     channel: "stable",
     latest: {
       version,
-      registry: "https://registry.npmjs.org",
       published_at: "2026-09-13T00:00:00Z",
       release_url: `https://github.com/rewind-rewind/rewindrewindcli/releases/tag/v${version}`,
     },
@@ -1012,6 +1012,15 @@ test("update --check reports a newer semantic version without installing it", as
   assert.equal(installs, 0);
 });
 
+test("update rejects a manifest from a different GitHub repository", async () => {
+  const manifest = releaseManifest("0.5.0");
+  manifest.repository = "example/rewindrewindcli";
+  const io = harness({ fetch: async () => jsonResponse(manifest) });
+
+  assert.equal(await main(["update", "--check", "--json"], io), 1);
+  assert.match(io.stderr.text, /expected repository rewind-rewind\/rewindrewindcli/);
+});
+
 test("update --yes installs the exact manifest release through npm", async () => {
   const calls = [];
   const io = harness({
@@ -1028,7 +1037,7 @@ test("update --yes installs the exact manifest release through npm", async () =>
   assert.deepEqual(calls, [
     {
       command: "npm",
-      args: ["install", "--global", "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", "@rewindrewind/cli@0.5.0"],
+      args: ["install", "--global", "--no-audit", "--no-fund", "github:rewind-rewind/rewindrewindcli#v0.5.0"],
     },
     { command: "rewindrewind", args: ["--version"] },
   ]);
