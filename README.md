@@ -8,10 +8,10 @@ It is designed for people, coding agents, and scripts. Output is readable by def
 
 Node.js 18.18 or newer is required.
 
-Install the CLI from its public GitHub repository:
+Install the public npm package:
 
 ```sh
-npm install -g github:rewind-rewind/rewindrewindcli
+npm install -g @rewindrewind/cli
 ```
 
 Create an admin API key in [RewindRewind](https://rewindrewind.com), then initialize and verify your project:
@@ -27,8 +27,29 @@ You can use `rr` as a shorter alias for `rewindrewind`.
 To run the CLI without installing it:
 
 ```sh
-npx github:rewind-rewind/rewindrewindcli status
+npx @rewindrewind/cli status
 ```
+
+## CLI updates
+
+The CLI checks the public release manifest at
+`https://rewindrewind.com/cli/releases.json` at most once every 24 hours. Human
+commands show a short notice when an update is available. JSON output stays
+stable; `status --json` and `init --json` include a `cli_update` object instead.
+
+```sh
+rewindrewind update --check
+rewindrewind update --check --json
+rewindrewind update --yes
+```
+
+`update --yes` installs the exact semantic version named by the manifest. Run
+`rewindrewind doctor` to check the runtime, configuration, service, release
+manifest, and installed version. `rewindrewind doctor --fix` repairs safe local
+permission and URL problems and installs an available CLI update.
+
+Set `REWINDREWIND_NO_UPDATE_CHECK=1` to disable automatic checks. Explicit
+`update` and `doctor` commands still check when asked.
 
 ## What `init` does
 

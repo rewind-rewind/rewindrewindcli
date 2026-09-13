@@ -1,6 +1,6 @@
 {
-  "name": "rewindrewindcli",
-  "version": "0.3.0",
+  "name": "@rewindrewind/cli",
+  "version": "0.4.0",
   "description": "RewindRewind CLI — set up front-end exceptions, back-end exceptions, and app events, and drive the whole API.",
   "type": "module",
   "bin": {
@@ -10,6 +10,7 @@
   },
   "files": [
     "bin",
+    "release-manifest.json",
     "AGENTS.md",
     "README.md",
     "LICENSE"
@@ -17,7 +18,8 @@
   "scripts": {
     "test": "node --test",
     "coverage": "node --test --experimental-test-coverage",
-    "lint": "node --check bin/rewindrewind.mjs"
+    "lint": "node --check bin/rewindrewind.mjs",
+    "release:check": "node scripts/check-release.mjs"
   },
   "keywords": [
     "rewindrewind",
@@ -39,7 +41,8 @@
   },
   "homepage": "https://github.com/rewind-rewind/rewindrewindcli#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "engines": {
     "node": ">=18.18"

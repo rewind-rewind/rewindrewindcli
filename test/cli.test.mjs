@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -28,7 +28,7 @@ test("installed bin symlink executes the cli", async () => {
     const link = join(temp, "rewindrewind");
     await symlink(join(thisDir, "..", "bin", "rewindrewind.mjs"), link);
     const { stdout } = await execFileP(link, ["--version"]);
-    assert.equal(stdout.trim(), "0.3.0");
+    assert.equal(stdout.trim(), "0.4.0");
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -968,6 +968,7 @@ function harness(overrides = {}) {
   stdin.end();
   const env = {
     XDG_CONFIG_HOME: join(tmpdir(), `rewindrewindcli-test-${process.pid}-${Math.random().toString(36).slice(2)}`),
+    REWINDREWIND_NO_UPDATE_CHECK: "1",
     ...(overrides.env ?? {}),
   };
   return {
@@ -975,10 +976,164 @@ function harness(overrides = {}) {
     stdout: capture(),
     stderr: capture(),
     env,
+    disableUpdateCache: true,
     fetch: async () => jsonResponse({ ok: true }),
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "env")),
   };
 }
+
+function releaseManifest(version = "0.4.0") {
+  return {
+    schema_version: 1,
+    package: "@rewindrewind/cli",
+    channel: "stable",
+    latest: {
+      version,
+      registry: "https://registry.npmjs.org",
+      published_at: "2026-09-13T00:00:00Z",
+      release_url: `https://github.com/rewind-rewind/rewindrewindcli/releases/tag/v${version}`,
+    },
+  };
+}
+
+test("update --check reports a newer semantic version without installing it", async () => {
+  let installs = 0;
+  const io = harness({
+    fetch: async () => jsonResponse(releaseManifest("0.5.0")),
+    runCommand: async () => { installs += 1; return { code: 0 }; },
+  });
+
+  assert.equal(await main(["update", "--check", "--json"], io), 0);
+  const out = JSON.parse(io.stdout.text);
+  assert.equal(out.current_version, "0.4.0");
+  assert.equal(out.latest_version, "0.5.0");
+  assert.equal(out.update_available, true);
+  assert.equal(out.updated, false);
+  assert.equal(installs, 0);
+});
+
+test("update --yes installs the exact manifest release through npm", async () => {
+  const calls = [];
+  const io = harness({
+    fetch: async () => jsonResponse(releaseManifest("0.5.0")),
+    runCommand: async (command, args) => {
+      calls.push({ command, args });
+      return command === "rewindrewind" ? { code: 0, stdout: "0.5.0\n" } : { code: 0 };
+    },
+  });
+
+  assert.equal(await main(["update", "--yes", "--json"], io), 0);
+  const out = JSON.parse(io.stdout.text);
+  assert.equal(out.updated, true);
+  assert.deepEqual(calls, [
+    {
+      command: "npm",
+      args: ["install", "--global", "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", "@rewindrewind/cli@0.5.0"],
+    },
+    { command: "rewindrewind", args: ["--version"] },
+  ]);
+});
+
+test("ordinary human commands show a fresh cached update notice", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "rewindrewindcli-update-cache-"));
+  try {
+    const cacheDirectory = join(temp, "rewindrewind");
+    await mkdir(cacheDirectory, { recursive: true });
+    await writeFile(join(cacheDirectory, "update-check.json"), JSON.stringify({
+      schema_version: 1,
+      checked_at: "2026-09-13T12:00:00.000Z",
+      manifest: releaseManifest("0.5.0"),
+    }));
+    const io = harness({
+      now: () => Date.parse("2026-09-13T13:00:00.000Z"),
+      updateCachePath: join(cacheDirectory, "update-check.json"),
+      env: { XDG_CACHE_HOME: temp, REWINDREWIND_NO_UPDATE_CHECK: "false" },
+      fetch: async () => jsonResponse({ ok: true }),
+    });
+
+    assert.equal(await main(["health"], io), 0);
+    assert.match(io.stderr.text, /Update available.*0\.4\.0.*0\.5\.0/);
+    assert.match(io.stderr.text, /rewindrewind update --yes/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("status JSON includes cached update metadata without corrupting output", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "rewindrewindcli-status-cache-"));
+  try {
+    const cacheDirectory = join(temp, "rewindrewind");
+    await mkdir(cacheDirectory, { recursive: true });
+    await writeFile(join(cacheDirectory, "update-check.json"), JSON.stringify({
+      schema_version: 1,
+      checked_at: "2026-09-13T12:00:00.000Z",
+      manifest: releaseManifest("0.5.0"),
+    }));
+    const io = harness({
+      now: () => Date.parse("2026-09-13T13:00:00.000Z"),
+      updateCachePath: join(cacheDirectory, "update-check.json"),
+      env: { XDG_CACHE_HOME: temp, REWINDREWIND_NO_UPDATE_CHECK: "false" },
+    });
+
+    assert.equal(await main(["status", "--json"], io), 0);
+    const out = JSON.parse(io.stdout.text);
+    assert.equal(out.cli_update.latest_version, "0.5.0");
+    assert.equal(out.cli_update.update_available, true);
+    assert.equal(io.stderr.text, "");
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("doctor --fix secures local state and checks service and releases", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "rewindrewindcli-doctor-fix-"));
+  try {
+    const configDirectory = join(temp, "config", "rewindrewind");
+    const configFile = join(configDirectory, "config.json");
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(configFile, JSON.stringify({ baseUrl: "https://rw.test/" }), { mode: 0o644 });
+    await chmod(configFile, 0o644);
+    const io = harness({
+      updateCachePath: join(temp, "cache", "rewindrewind", "update-check.json"),
+      env: { XDG_CONFIG_HOME: join(temp, "config"), XDG_CACHE_HOME: join(temp, "cache") },
+      fetch: async (url) => String(url).endsWith("/cli/releases.json") ? jsonResponse(releaseManifest()) : jsonResponse({ ok: true }),
+    });
+
+    assert.equal(await main(["doctor", "--fix", "--json"], io), 0);
+    const out = JSON.parse(io.stdout.text);
+    assert.equal(out.ok, true);
+    assert.equal(out.fixed, true);
+    assert.ok(out.checks.some((check) => check.id === "release-manifest" && check.ok));
+    assert.equal((await stat(configFile)).mode & 0o777, 0o600);
+    assert.equal(JSON.parse(await readFile(configFile, "utf8")).baseUrl, "https://rw.test");
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("doctor --fix preserves an invalid config before resetting it", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "rewindrewindcli-doctor-invalid-"));
+  try {
+    const configDirectory = join(temp, "config", "rewindrewind");
+    const configFile = join(configDirectory, "config.json");
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(configFile, "{not json\n");
+    const io = harness({
+      updateCachePath: join(temp, "cache", "rewindrewind", "update-check.json"),
+      env: { XDG_CONFIG_HOME: join(temp, "config") },
+      fetch: async (url) => String(url).endsWith("/cli/releases.json") ? jsonResponse(releaseManifest()) : jsonResponse({ ok: true }),
+    });
+
+    assert.equal(await main(["doctor", "--fix", "--json"], io), 0);
+    const out = JSON.parse(io.stdout.text);
+    assert.equal(out.checks.find((check) => check.id === "config-json").ok, true);
+    assert.deepEqual(JSON.parse(await readFile(configFile, "utf8")), {});
+    const backupPath = out.fixes.find((fix) => fix.includes("invalid configuration")).replace("moved the invalid configuration to ", "");
+    assert.equal(await readFile(backupPath, "utf8"), "{not json\n");
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
 
 function capture() {
   return {

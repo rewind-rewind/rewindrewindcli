@@ -1,12 +1,18 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { createReadStream, realpathSync } from "node:fs";
+import { access, chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { constants as fsConstants, createReadStream, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_BASE_URL = "https://rewindrewind.com";
-const VERSION = "0.3.0";
+const PACKAGE = createRequire(import.meta.url)("../package.json");
+const VERSION = PACKAGE.version;
+const PACKAGE_NAME = PACKAGE.name;
+const RELEASE_MANIFEST_URL = `${DEFAULT_BASE_URL}/cli/releases.json`;
+const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 
 // RewindRewind uses two kinds of key, and the CLI maps each command to the right
 // one automatically:
@@ -70,6 +76,8 @@ const COMMAND_DIRECTORY = [
   { command: "status", summary: "Check admin auth; agents should run this first." },
   { command: "init", summary: "Configure auth, choose a project, fetch the public project key, print setup snippets." },
   { command: "verify", summary: "Send test event and exception data and confirm the setup works." },
+  { command: "update [--check|--yes]", summary: "Check for a newer CLI release or install it through npm." },
+  { command: "doctor [--fix]", summary: "Diagnose the CLI, configuration, service, and update path; repair safe problems." },
   { command: "help [topic]", summary: "Show concise task help; run it without a topic for the directory." },
   { command: "sdk list|show|snippet|env|primitives|doctor|upgrade", summary: "Machine-readable SDK setup pointers, agent hints, doctor checks, and upgrade plans." },
   { command: "configure | config get|set|unset", summary: "Read and write CLI config." },
@@ -730,10 +738,19 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       return 0;
     }
 
-    const config = await loadConfig(io);
+    let config;
+    let configError;
+    try {
+      config = await loadConfig(io);
+    } catch (error) {
+      if (parsed.positionals[0] !== "doctor") throw error;
+      config = {};
+      configError = error instanceof Error ? error.message : String(error);
+    }
     const ctx = {
       io,
       config,
+      configError,
       fetch: fetchImpl,
       streams,
       configPath: configPath(io),
@@ -746,9 +763,14 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       command: parsed.positionals,
       cwd: io.cwd ?? process.cwd(),
     };
+    ctx.updateInfo = await automaticUpdateInfo(ctx);
 
-    const result = await dispatch(ctx);
+    let result = await dispatch(ctx);
+    if (result && typeof result === "object" && ["status", "init"].includes(ctx.command[0]) && ctx.updateInfo) {
+      result = { ...result, cli_update: publicUpdateInfo(ctx.updateInfo) };
+    }
     if (result !== undefined && !ctx.quiet) writeOutput(streams.stdout, result, ctx.format, ctx.command);
+    if (shouldPrintUpdateNotice(ctx, result)) writeUpdateNotice(streams.stderr, ctx.updateInfo);
     return 0;
   } catch (error) {
     const status = error instanceof CliError ? error.status : 1;
@@ -805,6 +827,10 @@ async function dispatch(ctx) {
       return initCommand(ctx);
     case "verify":
       return verifyCommand(ctx);
+    case "update":
+      return updateCommand(ctx);
+    case "doctor":
+      return doctorCommand(ctx);
     case "configure":
       return configure(ctx);
     case "config":
@@ -1255,6 +1281,8 @@ ${formatRows(payload.global_options.map((item) => [item.option, item.summary]), 
 
 Machine-readable help:
   rewindrewind --help --json
+  rewindrewind update --check --json
+  rewindrewind doctor --json
   rewindrewind help sdk node --json
   rewindrewind sdk list --json
   rewindrewind sdk primitives node --json
@@ -1337,6 +1365,22 @@ function commandHelp(name) {
       ],
       see_also: ["help troubleshooting"],
     },
+    update: {
+      usage: ["rewindrewind update --check", "rewindrewind update --yes", "rewindrewind update --check --json"],
+      details: [
+        `Reads the public release metadata at ${RELEASE_MANIFEST_URL} and installs ${PACKAGE_NAME} through npm.`,
+        "Automatic notices use a 24-hour cache and never alter JSON output from ordinary commands.",
+      ],
+      see_also: ["doctor", "--version"],
+    },
+    doctor: {
+      usage: ["rewindrewind doctor", "rewindrewind doctor --fix", "rewindrewind doctor --json"],
+      details: [
+        "Checks the Node runtime, local configuration, service health, release manifest, and installed CLI version.",
+        "--fix secures local configuration files and directories, normalizes the base URL, and installs an available CLI update.",
+      ],
+      see_also: ["update --check", "status", "sdk doctor"],
+    },
     sdk: { usage: HELP_TOPICS.sdk.commands, see_also: ["help sdk", "sdk primitives node", "sdk doctor", "sdk upgrade"] },
     events: { usage: HELP_TOPICS.events.commands, see_also: ["help events", "help sdk"] },
     visits: { usage: ["rewindrewind visits send --environment production", "rewindrewind visits send --environment production --visitor-id user-42", "rewindrewind visits list --from 2026-07-01 --to 2026-07-13", "rewindrewind visits list --environment production"], see_also: ["health-rules", "openapi"] },
@@ -1409,6 +1453,349 @@ function normalizeSdkId(value) {
 
 function fence(language, code) {
   return `\`\`\`${language}\n${code}\n\`\`\``;
+}
+
+function updateCachePath(ctx) {
+  if (ctx.io.updateCachePath) return resolve(ctx.io.updateCachePath);
+  const root = env("XDG_CACHE_HOME", ctx.io) ?? join(homedir(), ".cache");
+  return join(root, "rewindrewind", "update-check.json");
+}
+
+function updateManifestUrl(ctx) {
+  return stringOption(ctx.options, "manifest-url") ?? env("REWINDREWIND_RELEASE_MANIFEST_URL", ctx.io) ?? RELEASE_MANIFEST_URL;
+}
+
+function currentTime(ctx) {
+  const value = typeof ctx.io.now === "function" ? ctx.io.now() : Date.now();
+  return new Date(value);
+}
+
+async function automaticUpdateInfo(ctx) {
+  if (["update", "doctor"].includes(ctx.command[0])) return undefined;
+  if (parseBoolean(env("REWINDREWIND_NO_UPDATE_CHECK", ctx.io) ?? false)) return undefined;
+  const cached = await readUpdateCache(ctx);
+  const checkedAt = cached?.checked_at ? Date.parse(cached.checked_at) : Number.NaN;
+  if (cached && Number.isFinite(checkedAt) && currentTime(ctx).getTime() - checkedAt < UPDATE_CHECK_TTL_MS) {
+    return releaseInfo(cached.manifest, cached.checked_at, "cache");
+  }
+  try {
+    return await refreshUpdateInfo(ctx, { timeoutMs: 1200 });
+  } catch {
+    return cached ? { ...releaseInfo(cached.manifest, cached.checked_at, "cache"), stale: true } : undefined;
+  }
+}
+
+async function refreshUpdateInfo(ctx, options = {}) {
+  const manifestUrl = updateManifestUrl(ctx);
+  let timer;
+  let signal;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  if (timeoutMs && typeof AbortController === "function") {
+    const controller = new AbortController();
+    signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  }
+  try {
+    const response = await ctx.fetch(manifestUrl, {
+      headers: { accept: "application/json", "user-agent": `${PACKAGE_NAME}/${VERSION}` },
+      signal,
+    });
+    if (!response.ok) throw new CliError(`Release manifest returned HTTP ${response.status}.`, 1);
+    const manifest = validateReleaseManifest(await response.json(), manifestUrl);
+    const checkedAt = currentTime(ctx).toISOString();
+    await writeUpdateCache(ctx, { schema_version: 1, checked_at: checkedAt, manifest }).catch(() => {});
+    return releaseInfo(manifest, checkedAt, "network");
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function validateReleaseManifest(value, manifestUrl = RELEASE_MANIFEST_URL) {
+  if (!value || typeof value !== "object" || value.schema_version !== 1) {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: expected schema_version 1.`, 1);
+  }
+  if (value.package !== PACKAGE_NAME) {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: expected package ${PACKAGE_NAME}.`, 1);
+  }
+  const latest = value.latest;
+  if (!latest || typeof latest !== "object" || !parseSemver(latest.version)) {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: latest.version must be semantic versioning.`, 1);
+  }
+  const registry = latest.registry ?? "https://registry.npmjs.org";
+  let registryUrl;
+  try {
+    registryUrl = new URL(registry);
+  } catch {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: latest.registry is not a URL.`, 1);
+  }
+  const localRegistry = ["localhost", "127.0.0.1", "::1"].includes(registryUrl.hostname);
+  if (registryUrl.protocol !== "https:" && !(registryUrl.protocol === "http:" && localRegistry)) {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: latest.registry must use HTTPS.`, 1);
+  }
+  if (!localRegistry && registryUrl.origin !== "https://registry.npmjs.org") {
+    throw new CliError(`Invalid release manifest from ${manifestUrl}: releases must come from registry.npmjs.org.`, 1);
+  }
+  return {
+    schema_version: 1,
+    package: PACKAGE_NAME,
+    channel: value.channel ?? "stable",
+    latest: {
+      version: latest.version.replace(/^v/, ""),
+      registry: registryUrl.toString().replace(/\/$/, ""),
+      published_at: latest.published_at,
+      release_url: latest.release_url,
+    },
+  };
+}
+
+function parseSemver(value) {
+  const match = String(value ?? "").match(/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
+  if (!match) return undefined;
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: match[4]?.split(".") ?? [] };
+}
+
+function compareSemver(left, right) {
+  const a = parseSemver(left);
+  const b = parseSemver(right);
+  if (!a || !b) throw new CliError(`Cannot compare invalid versions: ${left}, ${right}.`, 1);
+  for (const field of ["major", "minor", "patch"]) {
+    if (a[field] !== b[field]) return a[field] < b[field] ? -1 : 1;
+  }
+  if (a.prerelease.length === 0 && b.prerelease.length === 0) return 0;
+  if (a.prerelease.length === 0) return 1;
+  if (b.prerelease.length === 0) return -1;
+  const length = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let i = 0; i < length; i += 1) {
+    if (a.prerelease[i] === undefined) return -1;
+    if (b.prerelease[i] === undefined) return 1;
+    if (a.prerelease[i] === b.prerelease[i]) continue;
+    const aNumber = /^\d+$/.test(a.prerelease[i]) ? Number(a.prerelease[i]) : undefined;
+    const bNumber = /^\d+$/.test(b.prerelease[i]) ? Number(b.prerelease[i]) : undefined;
+    if (aNumber !== undefined && bNumber !== undefined) return aNumber < bNumber ? -1 : 1;
+    if (aNumber !== undefined) return -1;
+    if (bNumber !== undefined) return 1;
+    return a.prerelease[i] < b.prerelease[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+function releaseInfo(manifest, checkedAt, source) {
+  const latestVersion = manifest.latest.version;
+  return {
+    current_version: VERSION,
+    latest_version: latestVersion,
+    update_available: compareSemver(VERSION, latestVersion) < 0,
+    package: manifest.package,
+    registry: manifest.latest.registry,
+    release_url: manifest.latest.release_url,
+    checked_at: checkedAt,
+    source,
+  };
+}
+
+function publicUpdateInfo(info) {
+  return compact({
+    current_version: info.current_version,
+    latest_version: info.latest_version,
+    update_available: info.update_available,
+    checked_at: info.checked_at,
+    stale: info.stale,
+  });
+}
+
+async function readUpdateCache(ctx) {
+  try {
+    const value = JSON.parse(await readFile(updateCachePath(ctx), "utf8"));
+    if (value?.schema_version !== 1 || typeof value.checked_at !== "string") return undefined;
+    return { ...value, manifest: validateReleaseManifest(value.manifest, updateCachePath(ctx)) };
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeUpdateCache(ctx, value) {
+  if (ctx.io.disableUpdateCache) return;
+  const path = updateCachePath(ctx);
+  const directory = dirname(path);
+  const temporary = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  try {
+    await chmod(directory, 0o700);
+    await writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    if (process.platform === "win32") await unlink(path).catch(() => {});
+    await rename(temporary, path);
+    await chmod(path, 0o600);
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw error;
+  }
+}
+
+function shouldPrintUpdateNotice(ctx) {
+  return ctx.format === "human" && !ctx.quiet && ctx.updateInfo?.update_available;
+}
+
+function writeUpdateNotice(stream, info) {
+  stream.write(`\nUpdate available: RewindRewind CLI ${info.current_version} → ${info.latest_version}. Run \`rewindrewind update --yes\`.\n`);
+}
+
+async function updateCommand(ctx) {
+  assertKnownOptions(ctx, "update", ["check", "yes", "manifest-url", "json", "pretty", "format", "quiet", "verbose"]);
+  const checkOnly = booleanOption(ctx.options, "check");
+  const yes = booleanOption(ctx.options, "yes");
+  if (ctx.command.length > 1) throw usage("`update` does not take a positional argument. Use --check or --yes.");
+  if (checkOnly && yes) throw usage("Use either `update --check` or `update --yes`, not both.");
+  const info = await refreshUpdateInfo(ctx);
+  const result = { ok: true, ...info, command: `npm install --global ${info.package}@${info.latest_version}` };
+  if (!info.update_available) return { ...result, updated: false, message: `RewindRewind CLI ${VERSION} is current.` };
+  if (!yes) {
+    return {
+      ...result,
+      updated: false,
+      action: checkOnly ? "Run `rewindrewind update --yes` to install this release." : "Update found. Re-run with `rewindrewind update --yes` to install it.",
+    };
+  }
+  await installRelease(ctx, info);
+  return { ...result, updated: true, previous_version: VERSION, installed_version: info.latest_version, message: `Installed RewindRewind CLI ${info.latest_version}.` };
+}
+
+async function installRelease(ctx, info) {
+  const npm = env("REWINDREWIND_NPM", ctx.io) ?? (process.platform === "win32" ? "npm.cmd" : "npm");
+  const args = ["install", "--global", "--no-audit", "--no-fund", `--registry=${info.registry}`, `${info.package}@${info.latest_version}`];
+  if (typeof ctx.io.runCommand === "function") {
+    const result = await ctx.io.runCommand(npm, args);
+    if (result?.code && result.code !== 0) throw new CliError(`npm exited with status ${result.code}.`, 1);
+  } else {
+    await new Promise((resolvePromise, reject) => {
+      const child = spawn(npm, args, { stdio: ["inherit", ctx.format === "human" && !ctx.quiet ? "inherit" : "ignore", "inherit"], env: process.env });
+      child.on("error", (error) => reject(new CliError(`Could not run npm: ${error.message}`, 1)));
+      child.on("exit", (code, signalName) => {
+        if (code === 0) resolvePromise();
+        else reject(new CliError(`npm update failed${signalName ? ` (${signalName})` : ` with status ${code}`}.`, 1));
+      });
+    });
+  }
+  const installedVersion = await readInstalledCliVersion(ctx);
+  if (installedVersion !== info.latest_version) {
+    throw new CliError(`npm completed, but \`rewindrewind --version\` returned ${installedVersion || "no version"}; expected ${info.latest_version}. Check your global npm prefix and PATH.`, 1);
+  }
+}
+
+async function readInstalledCliVersion(ctx) {
+  if (typeof ctx.io.runCommand === "function") {
+    const result = await ctx.io.runCommand(process.platform === "win32" ? "rewindrewind.cmd" : "rewindrewind", ["--version"], { capture: true });
+    if (result?.code && result.code !== 0) return undefined;
+    return String(result?.stdout ?? "").trim();
+  }
+  return new Promise((resolvePromise) => {
+    const command = process.platform === "win32" ? "rewindrewind.cmd" : "rewindrewind";
+    const child = spawn(command, ["--version"], { stdio: ["ignore", "pipe", "ignore"], env: process.env });
+    let stdout = "";
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.on("error", () => resolvePromise(undefined));
+    child.on("exit", (code) => resolvePromise(code === 0 ? stdout.trim() : undefined));
+  });
+}
+
+async function doctorCommand(ctx) {
+  assertKnownOptions(ctx, "doctor", ["fix", "manifest-url", "json", "pretty", "format", "quiet", "verbose"]);
+  const fix = booleanOption(ctx.options, "fix");
+  if (ctx.command.length > 1) throw usage("`doctor` does not take a positional argument. Use --fix to apply repairs.");
+  const fixes = [];
+  const configDirectory = dirname(ctx.configPath);
+  const cacheDirectory = dirname(updateCachePath(ctx));
+  let invalidConfigBackup;
+
+  if (fix) {
+    for (const directory of [configDirectory, cacheDirectory]) {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await chmod(directory, 0o700);
+    }
+    fixes.push("secured configuration and update-cache directories");
+    if (ctx.configError && await pathExists(ctx.configPath)) {
+      invalidConfigBackup = `${ctx.configPath}.invalid-${currentTime(ctx).toISOString().replace(/[:.]/g, "-")}`;
+      await rename(ctx.configPath, invalidConfigBackup);
+      await saveConfig({}, ctx);
+      fixes.push(`moved the invalid configuration to ${invalidConfigBackup}`);
+      ctx.configError = undefined;
+    }
+    if (await pathExists(ctx.configPath)) {
+      await chmod(ctx.configPath, 0o600);
+      fixes.push("secured the configuration file");
+    }
+    if (ctx.config.baseUrl && normalizeBaseUrl(ctx.config.baseUrl) !== ctx.config.baseUrl) {
+      await saveConfig({ ...ctx.config, baseUrl: normalizeBaseUrl(ctx.config.baseUrl) }, ctx);
+      fixes.push("normalized the configured base URL");
+    }
+  }
+
+  const releaseProbe = await safe(() => refreshUpdateInfo(ctx));
+  const healthProbe = await safe(() => request(ctx, "GET", "/api/health", { auth: false }));
+  const adminProbe = await safe(() => resolveKey(ctx, "admin", { optional: true }));
+  const projectProbe = await safe(() => resolveKey(ctx, "project", { optional: true }));
+  const configMode = await pathMode(ctx.configPath);
+  const configDirectoryExists = await pathExists(configDirectory);
+  const configDirectoryWritable = await pathWritable(configDirectory);
+  let updateResult;
+  if (fix && releaseProbe.ok && releaseProbe.value.update_available) {
+    await installRelease(ctx, releaseProbe.value);
+    updateResult = { previous_version: VERSION, installed_version: releaseProbe.value.latest_version };
+    fixes.push(`updated the CLI to ${releaseProbe.value.latest_version}`);
+  }
+  const minimumNode = String(PACKAGE.engines?.node ?? ">=18.18").replace(/^>=\s*/, "");
+  const checks = [
+    { id: "node", ok: compareSemver(coerceRuntimeVersion(process.versions.node), coerceRuntimeVersion(minimumNode)) >= 0, detail: `Node ${process.versions.node}; requires ${PACKAGE.engines.node}` },
+    { id: "config-json", ok: ctx.configError ? false : true, detail: ctx.configError ? `configuration is invalid: ${ctx.configError}` : invalidConfigBackup ? `reset configuration; backup is ${invalidConfigBackup}` : "configuration JSON is valid" },
+    { id: "config-directory", ok: configDirectoryExists ? configDirectoryWritable : null, detail: configDirectoryExists ? `${configDirectory} is ${configDirectoryWritable ? "writable" : "not writable"}` : `${configDirectory} will be created by init or doctor --fix` },
+    { id: "config-permissions", ok: configMode === undefined ? null : process.platform === "win32" || (configMode & 0o077) === 0, detail: configMode === undefined ? "configuration file does not exist yet" : `configuration file mode is ${configMode.toString(8).padStart(3, "0")}` },
+    { id: "admin-key", ok: adminProbe.ok && adminProbe.value ? true : null, detail: adminProbe.ok && adminProbe.value ? "admin key is configured" : adminProbe.error ?? "admin key is not configured; run `rewindrewind init` when management access is needed" },
+    { id: "project-key", ok: projectProbe.ok && projectProbe.value ? true : null, detail: projectProbe.ok && projectProbe.value ? "public project key is configured" : projectProbe.error ?? "project key is not configured; run `rewindrewind init` before ingestion" },
+    { id: "service", ok: healthProbe.ok && healthProbe.value?.ok === true, detail: healthProbe.ok ? `${ctx.baseUrl}/api/health responded` : healthProbe.error },
+    { id: "release-manifest", ok: releaseProbe.ok, detail: releaseProbe.ok ? `${updateManifestUrl(ctx)} reports ${releaseProbe.value.latest_version}` : releaseProbe.error },
+    { id: "cli-version", ok: releaseProbe.ok ? !releaseProbe.value.update_available || Boolean(updateResult) : null, detail: releaseProbe.ok ? (updateResult ? `updated ${VERSION} → ${updateResult.installed_version}` : releaseProbe.value.update_available ? `${VERSION} is behind ${releaseProbe.value.latest_version}; run \`rewindrewind update --yes\`` : `${VERSION} is current`) : "could not compare versions" },
+  ];
+  return {
+    ok: checks.every((check) => check.ok !== false),
+    version: VERSION,
+    package: PACKAGE_NAME,
+    config_path: ctx.configPath,
+    update_cache_path: updateCachePath(ctx),
+    checks,
+    fixed: fix,
+    fixes,
+    update: updateResult,
+  };
+}
+
+function coerceRuntimeVersion(value) {
+  const match = String(value).match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+  return match ? `${match[1]}.${match[2]}.${match[3] ?? "0"}` : "0.0.0";
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pathWritable(path) {
+  try {
+    await access(path, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pathMode(path) {
+  try {
+    return (await stat(path)).mode & 0o777;
+  } catch {
+    return undefined;
+  }
 }
 
 // `status` is the agent's first step: it answers "do we have a working admin
@@ -2539,12 +2926,34 @@ function renderHumanOutput(value, command = []) {
   if (group === "status") return renderStatusOutput(value);
   if (group === "init") return renderInitOutput(value);
   if (group === "verify") return renderVerifyOutput(value);
+  if (group === "update") return renderUpdateOutput(value);
+  if (group === "doctor") return renderDoctorOutput(value);
   if (group === "configure") return renderConfigureOutput(value);
   if (group === "config") return renderConfigOutput(value);
   if (group === "sdk") return renderSdkCommandOutput(value, command[1]);
   if (group === "members") return renderMembersOutput(value, command[1]);
   if (group === "invites" || group === "invitations") return renderInvitesOutput(value, command[1]);
   return renderGenericOutput(value, titleFromCommand(command));
+}
+
+function renderUpdateOutput(value) {
+  const lines = ["RewindRewind CLI update", "", `Current: ${value.current_version}`, `Latest: ${value.latest_version}`];
+  if (value.updated) lines.push(`Updated: ${value.previous_version} → ${value.installed_version}`);
+  else lines.push(`Status: ${value.update_available ? "update available" : "current"}`);
+  if (value.action) lines.push("", value.action);
+  if (value.release_url) lines.push(`Release: ${value.release_url}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function renderDoctorOutput(value) {
+  const lines = [`RewindRewind doctor: ${value.ok ? "healthy" : "needs attention"}`, ""];
+  for (const check of value.checks ?? []) {
+    const mark = check.ok === true ? "ok" : check.ok === false ? "FAIL" : "warn";
+    lines.push(`[${mark}] ${check.id} - ${check.detail}`);
+  }
+  if (value.fixes?.length) lines.push("", "Fixes:", ...value.fixes.map((fix) => `  ${fix}`));
+  if (!value.fixed && value.checks?.some((check) => check.ok === false)) lines.push("", "Run `rewindrewind doctor --fix` to apply safe repairs.");
+  return `${lines.join("\n")}\n`;
 }
 
 function renderStatusOutput(value) {

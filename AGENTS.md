@@ -10,19 +10,19 @@ in this project, using its CLI. Do it in this exact order.
 
 ## Step 0 — Get the CLI
 
-No install needed — run it straight from the public repo:
+No install needed — run the public npm package:
 
 ```sh
-npx github:rewind-rewind/rewindrewindcli <command>
+npx @rewindrewind/cli <command>
 ```
 
 Optionally install it for a persistent `rewindrewind` (and `rr`) command:
 
 ```sh
-npm install -g github:rewind-rewind/rewindrewindcli
+npm install -g @rewindrewind/cli
 ```
 
-In the steps below, `rewindrewind <command>` means `npx github:rewind-rewind/rewindrewindcli <command>`
+In the steps below, `rewindrewind <command>` means `npx @rewindrewind/cli <command>`
 (or the installed `rewindrewind` command).
 
 ## Step 1 — Verify we have an API key (do this FIRST)
@@ -84,6 +84,19 @@ API. It needs an admin key, and a project id — taken from `--project`,
 `REWINDREWIND_PROJECT_ID`, config, or resolved from the configured project key.
 Ingestion is async, so the read-back retries for a few seconds before reporting a
 miss; a miss is a soft warning (`skip`), not a failure.
+
+## Keep the CLI current
+
+```sh
+rewindrewind update --check --json
+rewindrewind update --yes
+rewindrewind doctor --json
+rewindrewind doctor --fix
+```
+
+Ordinary human commands use a 24-hour cached release check and print a short
+notice when a newer semantic version is available. Structured `status` and
+`init` results include `cli_update`; other JSON output is unchanged.
 
 ---
 

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "package": "@rewindrewind/cli",
+  "channel": "stable",
+  "latest": {
+    "version": "0.4.0",
+    "registry": "https://registry.npmjs.org",
+    "published_at": null,
+    "release_url": "https://github.com/rewind-rewind/rewindrewindcli/releases/tag/v0.4.0"
+  }
+}
