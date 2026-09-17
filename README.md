@@ -179,14 +179,15 @@ Operate customer support:
 rewindrewind support submit --subject "Login help" --message "Reset failed" --email player@example.com
 rewindrewind support list --status active
 rewindrewind support get CONVERSATION_ID
-rewindrewind support reply CONVERSATION_ID --body "Reset sent" --channel email
+rewindrewind support reply CONVERSATION_ID --body "Reset sent" --channel email --occurred-at 2026-08-30T12:00:00Z
 rewindrewind support note CONVERSATION_ID --body "VIP account"
 rewindrewind support status CONVERSATION_ID --status resolved
 ```
 
-`support reply` records a response sent through the named channel. It does not
-send the response. Use `rewindrewind help support` for assignment, form settings,
-note editing, and requester-data erasure.
+`support reply` records a response sent through the named channel at the required
+`--occurred-at` time. It does not send the response. Use
+`rewindrewind help support` for assignment, form settings, note editing, and
+requester-data erasure.
 
 Preview and manage exception noise rules:
 

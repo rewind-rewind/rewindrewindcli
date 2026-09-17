@@ -1419,7 +1419,10 @@ test("support exposes intake and the complete management workflow", async () => 
   assert.equal(await main(["support", "submit", "--subject", "Help", "--message", "It broke", "--email", "me@example.com", "--identity-id", "u1"], io), 0);
   assert.equal(await main(["support", "list", "--status", "resolved"], io), 0);
   assert.equal(await main(["support", "get", "sc1"], io), 0);
-  assert.equal(await main(["support", "reply", "sc1", "--body", "Fixed", "--channel", "email"], io), 0);
+  assert.equal(await main([
+    "support", "reply", "sc1", "--body", "Fixed", "--channel", "email",
+    "--occurred-at", "2026-08-30T12:00:00.000Z",
+  ], io), 0);
   assert.equal(await main(["support", "note", "sc1", "--body", "Internal"], io), 0);
   assert.equal(await main(["support", "edit-note", "sc1", "sn1", "--body", "Updated"], io), 0);
   assert.equal(await main(["support", "status", "sc1", "--status", "resolved"], io), 0);
@@ -1443,9 +1446,25 @@ test("support exposes intake and the complete management workflow", async () => 
   ]);
   assert.equal(seen[0].auth, "Bearer rrpub_public");
   assert.deepEqual(seen[0].body, { subject: "Help", message: "It broke", contact: { email: "me@example.com" }, identity_id: "u1" });
-  assert.deepEqual(seen[3].body, { body: "Fixed", channel: "email" });
+  assert.deepEqual(seen[3].body, { body: "Fixed", channel: "email", occurred_at: "2026-08-30T12:00:00.000Z" });
   assert.deepEqual(seen[6].body, { status: "resolved" });
   assert.deepEqual(seen[7].body, { assignee_user_id: "u2" });
+});
+
+test("support reply requires the time the external response was sent", async () => {
+  const io = harness({
+    env: {
+      REWINDREWIND_API_KEY: "rr_admin_secret",
+      REWINDREWIND_PROJECT_ID: "p1",
+      REWINDREWIND_BASE_URL: "https://rw.test",
+    },
+    fetch: async () => {
+      throw new Error("request must not be sent");
+    },
+  });
+
+  assert.notEqual(await main(["support", "reply", "sc1", "--body", "Fixed", "--channel", "email"], io), 0);
+  assert.match(io.stderr.text, /--occurred-at/);
 });
 
 test("noise commands cover catalog, safe preview, rules, and match counts", async () => {

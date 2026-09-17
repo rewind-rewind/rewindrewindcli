@@ -610,7 +610,7 @@ const HELP_TOPICS = {
     title: "Support Inbox",
     summary: "Submit customer requests with a project key; operate the inbox with an admin key.",
     details: [
-      "`support reply` records a response sent through another channel; RewindRewind does not deliver it.",
+      "`support reply` records a response sent through another channel; RewindRewind does not deliver it. Supply when it was sent with `--occurred-at`.",
       "Status is open, resolved, or spam. Assignment takes a user_id from `members list --json`.",
       "Use `support settings update --data @settings.json`; use `support erase` for requester-data deletion.",
     ],
@@ -618,7 +618,7 @@ const HELP_TOPICS = {
       "rewindrewind support submit --subject <text> --message <text> [--email <email>]",
       "rewindrewind support list --status active",
       "rewindrewind support get <conversation-id>",
-      "rewindrewind support reply <conversation-id> --body <text> --channel email",
+      "rewindrewind support reply <conversation-id> --body <text> --channel email --occurred-at <ISO-time>",
       "rewindrewind support note <conversation-id> --body <text>",
       "rewindrewind support status <conversation-id> --status resolved",
       "rewindrewind support assign <conversation-id> --user <user-id|none>",
@@ -2386,7 +2386,7 @@ async function support(ctx, action) {
       body: compact({
         body: requiredOption(ctx.options, "body"),
         channel: requiredOption(ctx.options, "channel"),
-        occurred_at: stringOption(ctx.options, "occurred-at"),
+        occurred_at: requiredOption(ctx.options, "occurred-at"),
       }),
     });
   }
