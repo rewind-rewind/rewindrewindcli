@@ -303,3 +303,26 @@ Coverage artifacts are written under `coverage/`, which is git-ignored. CI runs
 `.github/workflows/ci.yml`).
 
 Keep the CLI thin. Validate local input, make direct HTTP requests, and preserve API responses for agents and scripts.
+
+## CRM
+
+`contacts` and `orgs` use the admin key. Select a project with `--project`.
+`rewindrewind help contacts` lists the full workflow.
+
+```sh
+rr contacts add --name Alice --email alice@example.com --fields '{"score":9}'
+rr contacts list --stage qualified --filters '[{"key":"score","op":"gte","value":9}]'
+rr contacts import --data @leads.json
+rr contacts link CONTACT_ID --identity-id CUSTOMER_ID --org-id CUSTOMER_ORG_ID
+rr orgs add --name Acme --domain example.com
+```
+
+Imports accept `{rows:[{source_key,record,notes,entries,source_metadata}]}`.
+Stable source keys make replay safe, including records without addresses.
+Use `contacts fields --data @fields.json` to set typed definitions.
+
+RR records outreach sent elsewhere. Commit `contacts reserve-first-touch ID`
+before sending and keep `attempt.id`. Use `finish-first-touch ID --attempt-id ID
+--status sent --data @entry.json` after confirmed delivery, or `--status uncertain`
+for an ambiguous result. Pending and uncertain reservations block another first
+touch. Only a confirmed non-delivery can be reconciled as `failed`.

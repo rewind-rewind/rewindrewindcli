@@ -28,7 +28,7 @@ test("installed bin symlink executes the cli", async () => {
     const link = join(temp, "rewindrewind");
     await symlink(join(thisDir, "..", "bin", "rewindrewind.mjs"), link);
     const { stdout } = await execFileP(link, ["--version"]);
-    assert.equal(stdout.trim(), "0.4.0");
+    assert.equal(stdout.trim(), "0.5.0");
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -982,7 +982,7 @@ function harness(overrides = {}) {
   };
 }
 
-function releaseManifest(version = "0.4.0") {
+function releaseManifest(version = "0.5.0") {
   return {
     schema_version: 1,
     source: "github",
@@ -999,21 +999,21 @@ function releaseManifest(version = "0.4.0") {
 test("update --check reports a newer semantic version without installing it", async () => {
   let installs = 0;
   const io = harness({
-    fetch: async () => jsonResponse(releaseManifest("0.5.0")),
+    fetch: async () => jsonResponse(releaseManifest("0.6.0")),
     runCommand: async () => { installs += 1; return { code: 0 }; },
   });
 
   assert.equal(await main(["update", "--check", "--json"], io), 0);
   const out = JSON.parse(io.stdout.text);
-  assert.equal(out.current_version, "0.4.0");
-  assert.equal(out.latest_version, "0.5.0");
+  assert.equal(out.current_version, "0.5.0");
+  assert.equal(out.latest_version, "0.6.0");
   assert.equal(out.update_available, true);
   assert.equal(out.updated, false);
   assert.equal(installs, 0);
 });
 
 test("update rejects a manifest from a different GitHub repository", async () => {
-  const manifest = releaseManifest("0.5.0");
+  const manifest = releaseManifest("0.6.0");
   manifest.repository = "example/rewindrewindcli";
   const io = harness({ fetch: async () => jsonResponse(manifest) });
 
@@ -1024,10 +1024,10 @@ test("update rejects a manifest from a different GitHub repository", async () =>
 test("update --yes installs the exact manifest release through npm", async () => {
   const calls = [];
   const io = harness({
-    fetch: async () => jsonResponse(releaseManifest("0.5.0")),
+    fetch: async () => jsonResponse(releaseManifest("0.6.0")),
     runCommand: async (command, args) => {
       calls.push({ command, args });
-      return command === "rewindrewind" ? { code: 0, stdout: "0.5.0\n" } : { code: 0 };
+      return command === "rewindrewind" ? { code: 0, stdout: "0.6.0\n" } : { code: 0 };
     },
   });
 
@@ -1037,7 +1037,7 @@ test("update --yes installs the exact manifest release through npm", async () =>
   assert.deepEqual(calls, [
     {
       command: "npm",
-      args: ["install", "--global", "--no-audit", "--no-fund", "github:rewind-rewind/rewindrewindcli#v0.5.0"],
+      args: ["install", "--global", "--no-audit", "--no-fund", "github:rewind-rewind/rewindrewindcli#v0.6.0"],
     },
     { command: "rewindrewind", args: ["--version"] },
   ]);
@@ -1051,7 +1051,7 @@ test("ordinary human commands show a fresh cached update notice", async () => {
     await writeFile(join(cacheDirectory, "update-check.json"), JSON.stringify({
       schema_version: 1,
       checked_at: "2026-09-13T12:00:00.000Z",
-      manifest: releaseManifest("0.5.0"),
+      manifest: releaseManifest("0.6.0"),
     }));
     const io = harness({
       now: () => Date.parse("2026-09-13T13:00:00.000Z"),
@@ -1061,7 +1061,7 @@ test("ordinary human commands show a fresh cached update notice", async () => {
     });
 
     assert.equal(await main(["health"], io), 0);
-    assert.match(io.stderr.text, /Update available.*0\.4\.0.*0\.5\.0/);
+    assert.match(io.stderr.text, /Update available.*0\.5\.0.*0\.6\.0/);
     assert.match(io.stderr.text, /rewindrewind update --yes/);
   } finally {
     await rm(temp, { recursive: true, force: true });
@@ -1076,7 +1076,7 @@ test("status JSON includes cached update metadata without corrupting output", as
     await writeFile(join(cacheDirectory, "update-check.json"), JSON.stringify({
       schema_version: 1,
       checked_at: "2026-09-13T12:00:00.000Z",
-      manifest: releaseManifest("0.5.0"),
+      manifest: releaseManifest("0.6.0"),
     }));
     const io = harness({
       now: () => Date.parse("2026-09-13T13:00:00.000Z"),
@@ -1086,7 +1086,7 @@ test("status JSON includes cached update metadata without corrupting output", as
 
     assert.equal(await main(["status", "--json"], io), 0);
     const out = JSON.parse(io.stdout.text);
-    assert.equal(out.cli_update.latest_version, "0.5.0");
+    assert.equal(out.cli_update.latest_version, "0.6.0");
     assert.equal(out.cli_update.update_available, true);
     assert.equal(io.stderr.text, "");
   } finally {

@@ -129,6 +129,8 @@ rewindrewind sdk        list | show <name> | primitives <name> | doctor [name] |
 rewindrewind projects   list | create | get | update | delete
 rewindrewind members    list | invite | role | remove
 rewindrewind invites    list | get | resend | revoke
+rewindrewind contacts   add | import | find | show | list | log | stage | link | merge | fields | settings
+rewindrewind orgs       add | import | find | show | list | log | stage | link | merge | fields
 rewindrewind support    submit | list | get | reply | note | edit-note | status | assign | settings [update] | erase
 rewindrewind noise      catalog | catalog-set | list | get | preview | create | update | disable | enable | matches
 rewindrewind notifications get | update | environment

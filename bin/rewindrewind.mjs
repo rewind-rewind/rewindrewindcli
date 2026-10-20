@@ -91,6 +91,8 @@ const COMMAND_DIRECTORY = [
   { command: "event-types list", summary: "Discover retained event names for rules and integrations." },
   { command: "noise catalog|catalog-set|list|get|preview|create|update|disable|enable|matches", summary: "Inspect and manage known-noise filters." },
   { command: "notifications get|update|environment", summary: "Configure project issue-email defaults, cadence, and environment overrides." },
+  { command: "contacts add|import|find|show|list|log|stage|link|merge|fields|settings", summary: "Manage project contacts, typed fields, history and first-touch reservations." },
+  { command: "orgs add|import|find|show|list|log|stage|link|merge|fields", summary: "Manage project organizations and their contacts." },
   { command: "support submit|list|get|reply|note|edit-note|status|assign|settings|erase", summary: "Submit requests and operate the support inbox." },
   { command: "events send|batch|list|raw", summary: "Send or inspect product analytics events." },
   { command: "visits send|list", summary: "Send a daily visit/DAU signal, or read the per-day visit series." },
@@ -605,6 +607,12 @@ const HELP_TOPICS = {
     ],
     see_also: ["help events", "help health"],
   },
+  contacts: {
+    id: "contacts", title: "CRM contacts and organizations", summary: "Manage leads, typed fields, timelines and conversion links with an admin key.",
+    details: ["Use orgs for the same organization operations. Filters use typed JSON: --filters '[{\"key\":\"score\",\"op\":\"gte\",\"value\":9}]'.", "Imports accept --data @file with {rows:[{source_key,record,notes,entries}]}. Stable source keys make retries safe.", "RR records outreach but does not send it. Reserve first touch before sending; pending and uncertain attempts block another send."],
+    commands: ["rewindrewind contacts add --name Alice --email alice@example.com --fields '{\"score\":9}'", "rewindrewind contacts import --data @leads.json", "rewindrewind contacts find --email alice@example.com", "rewindrewind contacts list --stage qualified", "rewindrewind contacts show <id>", "rewindrewind contacts log <id> --body <text> --channel email --direction outbound --occurred-at <ISO-time>", "rewindrewind contacts stage <id> --stage qualified", "rewindrewind contacts link <id> --identity-id <id> [--org-id <id>]", "rewindrewind contacts merge <id> --source <duplicate-id>", "rewindrewind contacts fields [--data @fields.json]", "rewindrewind contacts settings [--data @settings.json]", "rewindrewind contacts reserve-first-touch <id>", "rewindrewind contacts finish-first-touch <id> --attempt-id <id> --status uncertain", "rewindrewind orgs add --name Acme --domain example.com"],
+    see_also: ["help support"],
+  },
   support: {
     id: "support",
     title: "Support Inbox",
@@ -862,6 +870,11 @@ async function dispatch(ctx) {
       return noise(ctx, action);
     case "notifications":
       return notifications(ctx, action);
+    case "contacts":
+      return crm(ctx, action, "contacts");
+    case "orgs":
+    case "organizations":
+      return crm(ctx, action, "organizations");
     case "support":
       return support(ctx, action);
     case "usage":
@@ -1422,6 +1435,9 @@ function commandHelp(name) {
     "event-types": { usage: ["rewindrewind event-types list --query checkout --limit 12"], see_also: ["help health", "help metrics"] },
     noise: { usage: HELP_TOPICS.noise.commands, details: HELP_TOPICS.noise.details, see_also: HELP_TOPICS.noise.see_also },
     notifications: { usage: HELP_TOPICS.notifications.commands, see_also: HELP_TOPICS.notifications.see_also },
+    contacts: { usage: HELP_TOPICS.contacts.commands, details: HELP_TOPICS.contacts.details, see_also: HELP_TOPICS.contacts.see_also },
+    orgs: { usage: HELP_TOPICS.contacts.commands.map((line) => line.replace("contacts", "orgs")), details: HELP_TOPICS.contacts.details, see_also: ["help contacts"] },
+    organizations: { usage: HELP_TOPICS.contacts.commands.map((line) => line.replace("contacts", "organizations")), see_also: ["help contacts"] },
     support: { usage: HELP_TOPICS.support.commands, details: HELP_TOPICS.support.details, see_also: HELP_TOPICS.support.see_also },
     usage: { usage: ["rewindrewind usage get", "rewindrewind usage get --account <account-id>"], see_also: ["projects list"] },
     api: { usage: ["rewindrewind api get /api/projects", "rewindrewind api post /v1/events --data @event.json", "rewindrewind api get /openapi.json --no-auth"], see_also: ["openapi"] },
@@ -2101,7 +2117,8 @@ async function rawApi(ctx) {
   const data = ctx.options.data === undefined ? undefined : await jsonInput(ctx.options.data, ctx.streams.stdin);
   // DSN-aware default: /v1/* paths are ingestion (project key); everything else
   // is management (admin key). Override with --no-auth for public endpoints.
-  const keyKind = pathRaw.startsWith("/v1/") ? "project" : "admin";
+  const crmManagement = /^\/v1\/(contacts|organizations|crm)(\/|$)/.test(pathRaw);
+  const keyKind = pathRaw.startsWith("/v1/") && !crmManagement ? "project" : "admin";
   return request(ctx, methodRaw.toUpperCase(), pathRaw, {
     auth: booleanOption(ctx.options, "no-auth") ? false : undefined,
     keyKind,
@@ -2331,6 +2348,56 @@ async function notifications(ctx, action) {
     });
   }
   throw usage("Expected a notifications action: get, update, environment.");
+}
+
+async function crm(ctx, action = "list", resource) {
+  const base = `/v1/${resource}`;
+  const query = { project_id: projectId(ctx) };
+  const call = (method, path = base, body, extraQuery) => request(ctx, method, path, { keyKind: "admin", body, query: { ...query, ...extraQuery } });
+  const data = () => jsonInput(requiredOption(ctx.options, "data"), ctx.streams.stdin);
+  if (action === "list") {
+    const filters = ctx.options.filters === undefined ? undefined : JSON.stringify(await jsonInput(ctx.options.filters, ctx.streams.stdin));
+    return call("GET", base, undefined, compact({ ...queryFromOptions(ctx.options, ["stage", "limit", "after", "q"]), filters }));
+  }
+  if (action === "find") return call("GET", `${base}/find`, undefined, queryFromOptions(ctx.options, ["email", "phone", "domain", "default-country"]));
+  if (action === "fields") return ctx.options.data === undefined ? call("GET", `${base}/fields`) : call("PUT", `${base}/fields`, await data());
+  if (action === "settings") return ctx.options.data === undefined ? call("GET", "/v1/crm/settings") : call("PATCH", "/v1/crm/settings", await data());
+  if (action === "import") {
+    const input = await data();
+    return call("POST", `${base}/import`, Array.isArray(input) ? { rows: input } : input);
+  }
+  if (action === "add") {
+    const body = ctx.options.data === undefined ? compact({
+      name: stringOption(ctx.options, "name"), role: stringOption(ctx.options, "role"), domain: stringOption(ctx.options, "domain"),
+      organization_id: stringOption(ctx.options, "organization-id"), overview: stringOption(ctx.options, "overview"), stage: stringOption(ctx.options, "stage"),
+      default_country: stringOption(ctx.options, "default-country"),
+      emails: ctx.options.email === undefined ? undefined : (Array.isArray(ctx.options.email) ? ctx.options.email : [String(ctx.options.email)]),
+      phones: ctx.options.phone === undefined ? undefined : (Array.isArray(ctx.options.phone) ? ctx.options.phone : [String(ctx.options.phone)]),
+      custom_fields: ctx.options.fields === undefined ? undefined : await jsonInput(ctx.options.fields, ctx.streams.stdin),
+    }) : await data();
+    return call("POST", base, body);
+  }
+  const id = encodeURIComponent(ctx.command[2] || "");
+  if (!id) throw usage(`${resource} ${action} requires a record ID.`);
+  const path = `${base}/${id}`;
+  if (action === "show" || action === "get") return call("GET", path);
+  if (action === "update") return call("PATCH", path, await data());
+  if (action === "delete") return call("DELETE", path);
+  if (action === "stage") return call("PATCH", path, { stage: requiredOption(ctx.options, "stage") });
+  if (action === "merge") return call("POST", `${path}/merge`, { source_id: requiredOption(ctx.options, "source") });
+  if (action === "note") return call("POST", `${path}/notes`, { body: requiredOption(ctx.options, "body") });
+  if (action === "edit-note") return call("PATCH", `${path}/notes/${encodeURIComponent(requiredOption(ctx.options, "note-id"))}`, { body: requiredOption(ctx.options, "body") });
+  if (action === "log") {
+    const at = Date.parse(requiredOption(ctx.options, "occurred-at"));
+    if (!Number.isFinite(at)) throw usage("--occurred-at must be an ISO timestamp.");
+    return call("POST", `${path}/entries`, { body: requiredOption(ctx.options, "body"), channel: requiredOption(ctx.options, "channel"), direction: requiredOption(ctx.options, "direction"), occurred_at: at });
+  }
+  if (action === "link") return resource === "contacts"
+    ? call("POST", `${path}/link`, compact({ identity_id: requiredOption(ctx.options, "identity-id"), external_org_id: stringOption(ctx.options, "org-id") }))
+    : call("PATCH", path, { external_org_id: requiredOption(ctx.options, "org-id") });
+  if (resource === "contacts" && action === "reserve-first-touch") return call("POST", `${path}/first-touch`, ctx.options.data === undefined ? undefined : await data());
+  if (resource === "contacts" && action === "finish-first-touch") return call("PATCH", `${path}/first-touch/${encodeURIComponent(requiredOption(ctx.options, "attempt-id"))}`, compact({ status: requiredOption(ctx.options, "status"), entry: ctx.options.data === undefined ? undefined : await data() }));
+  throw usage(`Unknown ${resource} action: ${action}`);
 }
 
 async function support(ctx, action) {
