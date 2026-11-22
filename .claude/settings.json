@@ -2,13 +2,13 @@
   "hooks": {
     "Stop": [
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "'/home/agent47/.local/share/hardballer/hooks/hardballer-stop-hook-gate.py' sh -c 'bin/test 1\u003e\u00262 || echo '\\''bin/test reported issues (non-blocking stop hook).'\\'' \u003e\u00262'",
-            "type": "command"
+            "type": "command",
+            "command": "bin/test 1>&2 || echo 'bin/test reported issues (non-blocking stop hook).' >&2"
           }
-        ],
-        "matcher": ""
+        ]
       }
     ]
   }
